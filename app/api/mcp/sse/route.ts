@@ -16,6 +16,10 @@ export async function OPTIONS() {
     return new Response(null, { headers: corsHeaders });
 }
 
+export async function DELETE() {
+    return new Response(null, { status: 204, headers: corsHeaders });
+}
+
 export async function POST(req: Request) {
     console.log(`[MCP SSE] POST request received`);
     try {
@@ -24,7 +28,9 @@ export async function POST(req: Request) {
         console.log(`[MCP SSE] sessionId: ${sessionId}`);
 
         if (!sessionId) {
-            console.warn(`[MCP SSE] Missing sessionId in POST`);
+            console.warn(`[MCP SSE] Missing sessionId in POST. Full URL: ${req.url}`);
+            const bodyPreview = await req.clone().text().catch(() => "N/A");
+            console.log(`[MCP SSE] Body preview: ${bodyPreview.slice(0, 100)}`);
             return new Response(JSON.stringify({ error: "Missing sessionId" }), { status: 400, headers: corsHeaders });
         }
 
@@ -66,6 +72,7 @@ export async function GET(req: Request) {
         const decoded = verifyToken(token) as any;
 
         if (!decoded || !decoded.userId) {
+            console.warn(`[MCP SSE] Unauthorized: Invalid Token`);
             return new Response(JSON.stringify({ error: "Unauthorized: Invalid Token" }), {
                 status: 401,
                 headers: { ...corsHeaders, "Content-Type": "application/json" }
@@ -101,7 +108,8 @@ export async function GET(req: Request) {
         };
 
         // @ts-ignore - The SDK types expect http.ServerResponse
-        const transport = new SSEServerTransport("/api/mcp/messages", mockRes);
+        // Point both ends to the same route for simplicity and compatibility
+        const transport = new SSEServerTransport("/api/mcp/sse", mockRes);
 
         global.mcpTransports.set(transport.sessionId, transport);
 
