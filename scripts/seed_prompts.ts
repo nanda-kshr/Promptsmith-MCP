@@ -482,11 +482,12 @@ Output ONLY valid JSON:
   {
     feature_key: "execute_coding.stage3.batch",
     system_prompt: `You are a Senior Factory Generator.
-Your goal is to generate detailed Coding Prompts for a list of files.
+Your goal is to generate detailed but CONCISE Coding Prompts for a list of files.
 
 CONTEXT:
 - Tech Stack: {{tech_stack}}
 - Rules: {{rules_output}}
+- Data Models: {{data_models_output}}
 - Env Vars: {{env_output}}
 
 INSTRUCTIONS:
@@ -494,24 +495,21 @@ INSTRUCTIONS:
 2. For EACH file, generate a "Coding Prompt" that instructs an Agent to write that SPECIFIC file.
 3. The Coding Prompt MUST include:
     - The file path.
-    - The Summary & Logic constraints.
+    - The Summary & Logic constraints (Concise).
     - The specific Dependencies (imports) required.
-    - A strict instruction to writing the FULL code.
+    - The Rules and Data Models.
 
-4. TOKEN EFFICIENCY:
-   - DO NOT repeat the full Tech Stack, Rules, or Env Vars in your output.
-   - Instead, use these EXACT placeholders in the ${"`"}prompt_text${"`"}:
-     - {{tech_stack}}
-     - {{rules_output}}
-     - {{env_output}}
-   - The system will replace them with the actual content before saving.
+4. EXCLUSIONS & EXPANSIONS:
+   - DO NOT include "Tech Stack" or "Env Vars" in the output prompt.
+   - DO NOT use placeholders for Tech/Env in the output.
+   - EXPAND the Rules and Data Models (replace the placeholders with the actual content from the Context) in the output prompt.
 
 Output JSON Format:
 {
   "prompts": [
     {
       "title": "Create src/utils.ts",
-      "prompt_text": "Create the file 'src/utils.ts'.\\n\\nPurpose: [Summary]\\n\\nDependencies: [Deps]\\n\\nContext:\\n- Tech Stack: {{tech_stack}}\\n- Rules: {{rules_output}}\\n- Env Vars: {{env_output}}\\n\\nRequirements:\\n1. Implement the file according to the summary.\\n2. Ensure all types are exported.\\n\\nOutput only the code block."
+      "prompt_text": "Create the file 'src/utils.ts'.\\n\\nPurpose: [Summary]\\n\\nDependencies: [Deps]\\n\\nContext:\\n- Rules: {{rules_output}}\\n- Data Models: {{data_models_output}}\\n\\nRequirements:\\n1. Implement the file according to the summary.\\n2. Provide concise instructions.\\n\\nOutput only the code block."
     }
   ]
 }`,
@@ -519,75 +517,6 @@ Output JSON Format:
 {{files_batch}}
 
 Generate a coding prompt for EACH file.`
-  },
-  {
-    feature_key: "execute_coding.stage4", // Database
-    system_prompt: `You are a Database Engineer.
-Generate atomic coding prompts to implement the Database Layer.
-1. Connection/Client setup
-2. Schemas/Models (based on provided Data Models)
-
-Context:
-- Data Models: {{data_models_output}}
-- Tech Stack: {{tech_stack}}
-
-Output ONLY valid JSON:
-{
-  "prompts": [
-    {
-      "title": "Setup DB Connection",
-      "prompt_text": "Create lib/db.ts to handle connections..."
-    },
-    {
-      "title": "Define User Model",
-      "prompt_text": "Create models/User.ts with the following schema..."
-    }
-  ]
-}`,
-    user_template: `Generate database layer prompts.`
-  },
-  {
-    feature_key: "execute_coding.stage5", // Auth
-    system_prompt: `You are a Security Engineer.
-Generate atomic coding prompts to implement Authentication & Authorization.
-- Core Auth Logic
-- Middleware / Guards
-
-Context:
-- Rules: {{rules_output}}
-- Tech Stack: {{tech_stack}}
-
-Output ONLY valid JSON:
-{
-  "prompts": [
-    {
-      "title": "Implement Auth Middleware",
-      "prompt_text": "Create middleware/auth.ts to verify tokens..."
-    }
-  ]
-}`,
-    user_template: `Generate auth layer prompts.`
-  },
-  {
-    feature_key: "execute_coding.stage6", // APIs
-    system_prompt: `You are a Backend Developer.
-Generate atomic coding prompts to implement Feature APIs/Routes.
-Use the provided API Contracts strictly.
-
-Context:
-- API Contracts: {{apis_output}}
-- Rules: {{rules_output}}
-
-Output ONLY valid JSON:
-{
-  "prompts": [
-    {
-      "title": "Implement GET /projects",
-      "prompt_text": "Create route handler for GET /projects implementing this contract..."
-    }
-  ]
-}`,
-    user_template: `Generate API implementation prompts.`
   },
   {
     feature_key: "execute_coding.stage7", // Wiring

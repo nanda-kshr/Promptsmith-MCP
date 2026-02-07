@@ -3,6 +3,8 @@ import { getAuthPayload } from '@/app/lib/authHelper';
 import { getDb } from '@/app/lib/mongo';
 import { ObjectId } from 'mongodb';
 
+export const maxDuration = 300; // Allow 5 minutes for generation
+
 async function getUser() {
     return await getAuthPayload();
 }
@@ -30,6 +32,11 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
             // IF FINAL STAGE, MARK FEATURE AS COMPLETE
             if (stage === 'execute_coding.stage3') {
                 updateDoc.generated_output = "COMPLETED";
+                // Update Project Modes
+                await db.collection('project_modes').updateOne(
+                    { project_id: new ObjectId(projectId) },
+                    { $set: { [`features.execute_coding.status`]: "COMPLETED" } }
+                );
             }
 
             await db.collection('project_features').updateOne(
@@ -38,6 +45,35 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
                 { upsert: true }
             );
             return NextResponse.json({ message: "Stage Completed" });
+        }
+
+        // HANDLE RESET (Clear all prompts and restart)
+        if (body.action === 'reset') {
+            // 1. Delete all CODING prompts
+            await db.collection('generated_prompts').deleteMany({
+                project_id: new ObjectId(projectId),
+                type: "CODING"
+            });
+
+            // 2. Set all stages to IN_PROGRESS
+            const resetDoc: any = {
+                updatedAt: new Date(),
+                generated_output: "IN_PROGRESS",
+                stage_status: {
+                    execute_coding_check: "IN_PROGRESS",
+                    execute_coding_stage1: "IN_PROGRESS",
+                    execute_coding_stage2: "IN_PROGRESS",
+                    execute_coding_stage3: "IN_PROGRESS"
+                }
+            };
+
+            await db.collection('project_features').updateOne(
+                { project_id: new ObjectId(projectId), feature_key: 'execute_coding' },
+                { $set: resetDoc },
+                { upsert: true }
+            );
+
+            return NextResponse.json({ message: "Reset successful" });
         }
 
         // HANDLE PROMPT UPDATE (Existing)
@@ -160,12 +196,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             // Alternatively, we can find the actual saved prompt text for Stage 1 if needed.
             // For now, let's assume recommended_env_vars is accurate OR fetch from prompt history if needed.
             // Simplest: Use 'recommended_env_vars' stored in project_features during Stage 1 generation.
-            if (key === 'tech_choices') {
-                console.log(`[Debug] Tech Choices Feature Found: ${!!feature}`);
-                console.log(`[Debug] Has User Input? ${!!feature?.user_input}`);
-                console.log(`[Debug] User Input Keys: ${feature?.user_input ? Object.keys(feature.user_input).join(',') : 'None'}`);
-                console.log(`[Debug] Selected Stack: ${feature?.user_input?.selected_stack ? JSON.stringify(feature.user_input.selected_stack) : 'Missing'}`);
-            }
 
             // SPECIAL CASE: For tech_choices, prefer the USER SELECTED stack over the AI Analysis
             if (key === 'tech_choices' && feature?.user_input?.selected_stack) {
@@ -204,14 +234,30 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
         let allPrompts: any[] = [];
 
+        // 2. Set stage status to IN_PROGRESS
+        await db.collection('project_features').updateOne(
+            { project_id: new ObjectId(projectId), feature_key: 'execute_coding' },
+            { $set: { [`stage_status.${stage.replace('.', '_')}`]: "IN_PROGRESS" } }
+        );
+
+        // Update Project Mode Status
+        await db.collection('project_modes').updateOne(
+            { project_id: new ObjectId(projectId) },
+            { $set: { [`features.execute_coding.status`]: "IN_PROGRESS" } }
+        );
+
         // 3. EXECUTION LOGIC
+        let pagination: any = null;
+
         if (stage === 'execute_coding.stage3') {
+            const offset = body.offset || 0;
+            const limit = body.limit || 5;
+
             // --- STAGE 3 SPECIAL: BATCH PROCESSING ---
             const promptConfig = await db.collection('feature_prompts').findOne({ feature_key: 'execute_coding.stage3.batch' });
             if (!promptConfig) throw new Error("Stage 3 Batch Prompt not found");
 
             // A. Get Input from Stage 2 (Tree)
-            // We need to fetch the SAVED prompt for Stage 2 to get the approved tree
             const stage2Prompt = await db.collection('generated_prompts').findOne({
                 project_id: new ObjectId(projectId),
                 stage: 'execute_coding.stage2',
@@ -231,26 +277,42 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
                     const jsonStr = stage1Text.substring(jsonStart, jsonEnd + 1);
                     structureJson = JSON.parse(jsonStr);
                 } catch (e) {
-                    console.error("Failed to parse Stage 2 JSON", e);
+                    console.error("Failed to parse Stage 2 JSON:", e);
                     throw new Error("Invalid Stage 2 Output. Please regenerate Stage 2.");
                 }
             }
 
-            const sortedFiles = flattenFileTree(structureJson.tree || []);
 
-            console.log(`[Stage 3] Processing ${sortedFiles.length} files...`);
 
-            // B. Recursive Batch Generator
+            let sortedFiles = flattenFileTree(structureJson.tree || []);
+
+            // Deterministic Sort
+            sortedFiles.sort((a, b) => {
+                if ((a.order || 0) !== (b.order || 0)) return (a.order || 0) - (b.order || 0);
+                return (a.path || a.name || "").localeCompare(b.path || b.name || "");
+            });
+
+            const totalFiles = sortedFiles.length;
+
+            // BATCH SLICING
+            const filesToProcess = sortedFiles.slice(offset, offset + limit);
+            const isComplete = (offset + limit) >= totalFiles;
+
+            console.log(`[Stage 3] Processing Batch: ${offset} - ${offset + limit} (Total: ${totalFiles})`);
+
+            pagination = {
+                offset,
+                limit,
+                total: totalFiles,
+                nextOffset: offset + limit,
+                isComplete
+            };
+
+            // B. Generator
             const generateBatch = async (files: any[]): Promise<any[]> => {
                 if (files.length === 0) return [];
-                const BATCH_SIZE = 5; // Default target
 
-                // If files > BATCH_SIZE, split immediately
-                if (files.length > BATCH_SIZE) {
-                    const chunk = files.slice(0, BATCH_SIZE);
-                    const remaining = files.slice(BATCH_SIZE);
-                    return [...(await generateBatch(chunk)), ...(await generateBatch(remaining))];
-                }
+                console.log(`[Stage 3] Generating batch of ${files.length} files: ${files.map((f: any) => f.path || f.name).join(', ')}`);
 
                 // Prepare Input
                 const fileInputs = files.map(f => ({
@@ -261,44 +323,43 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
                 let userPrompt = promptConfig.user_template.replace('{{files_batch}}', JSON.stringify(fileInputs, null, 2));
                 userPrompt = applyContext(userPrompt);
-
-                // IMPORTANT: Also inject context into System Prompt
                 const systemPrompt = applyContext(promptConfig.system_prompt);
 
+                let aiOutput = "";
                 try {
-                    // Try to generate
-                    const aiOutput = await GeminiManager.generateWithRetry(payload.userId, userPrompt, systemPrompt, 1); // Low retry count, prefer splitting
-
-                    if (!aiOutput) throw new Error("No output");
+                    aiOutput = await GeminiManager.generateWithRetry(payload.userId, userPrompt, systemPrompt, 1) || "";
 
                     const jsonStart = aiOutput.indexOf('{');
                     const jsonEnd = aiOutput.lastIndexOf('}');
+                    let parsed: any = null;
 
-                    if (jsonStart === -1 || jsonEnd === -1) throw new Error("Invalid format");
+                    if (jsonStart !== -1 && jsonEnd !== -1) {
+                        try {
+                            const cleanJson = aiOutput.substring(jsonStart, jsonEnd + 1);
+                            parsed = JSON.parse(cleanJson);
+                        } catch (e) { console.warn("[Stage 3] Initial Parse Failed", e); }
+                    }
 
-                    const cleanJson = aiOutput.substring(jsonStart, jsonEnd + 1);
-                    const parsed = JSON.parse(cleanJson);
+                    if (!parsed) {
+                        parsed = await GeminiManager.repairJson(payload.userId, aiOutput);
+                    }
+
+                    if (!parsed || !parsed.prompts) throw new Error("Failed to parse");
+
+                    console.log(`[Stage 3] Batch Output Prompts: ${parsed.prompts.length}. Titles: ${parsed.prompts.map((p: any) => p.title).join(', ')}`);
+
                     return parsed.prompts || [];
 
                 } catch (error: any) {
-                    const isOverloaded = error?.status === 503 || error?.message?.includes('503');
-
-                    // ON FAIL: Split execution if possible
-                    if (isOverloaded && files.length > 1) {
-                        console.log(`[Stage 3] Overload on batch of ${files.length}. Splitting...`);
-                        const mid = Math.ceil(files.length / 2);
-                        const left = files.slice(0, mid);
-                        const right = files.slice(mid);
-                        return [...(await generateBatch(left)), ...(await generateBatch(right))];
-                    }
-
-                    console.error("Batch Failed", error);
-                    throw error; // Propagate if can't split or other error
+                    console.error("[Stage 3] Batch Error", error);
+                    return []; // Fail gracefully for this batch
                 }
             };
 
             // execute
-            allPrompts = await generateBatch(sortedFiles);
+            if (filesToProcess.length > 0) {
+                allPrompts = await generateBatch(filesToProcess);
+            }
 
         } else {
             // --- STANDARD LOGIC (Stages 0, 1, 2, 4-8) ---
@@ -338,30 +399,76 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
                     // STANDARD SINGLE GENERATOR
                     console.log(`[Debug] Processing ${generatorKey}`);
-                    console.log(`[Debug] Raw System Prompt has tech_stack? ${promptConfig.system_prompt.includes('{{tech_stack}}')}`);
-                    console.log(`[Debug] Tech Choices Length: ${getOutput('tech_choices').length}`);
+
+                    if (generatorKey === 'execute_coding.stage1.env') {
+                        console.log("[Stage 1 Debug] System Prompt Ready. Requesting AI...");
+                    }
+
+
+
 
                     const userPrompt = applyContext(promptConfig.user_template);
                     const systemPrompt = applyContext(promptConfig.system_prompt);
 
-                    console.log(`[Debug] Processed System Prompt has tech_stack? ${systemPrompt.includes('{{tech_stack}}')}`);
+
 
                     const aiOutput = await GeminiManager.generateWithRetry(payload.userId, userPrompt, systemPrompt) || "";
 
+
+
+                    let parsed: any = null;
                     try {
                         const cleanJson = aiOutput.replace(/```json\n?|\n?```/g, '').trim();
-                        const parsed = JSON.parse(cleanJson);
-                        if (parsed.prompts) allPrompts.push(...parsed.prompts);
+                        parsed = JSON.parse(cleanJson);
+                    } catch (e) {
+                        console.warn(`[Standard Generator] Initial Parse Failed for ${generatorKey}`, e);
+                        // Fallback Repair attempt
+                        try {
+                            parsed = await GeminiManager.repairJson(payload.userId, aiOutput);
+                        } catch (repairErr) {
+                            console.error(`[Standard Generator] Repair Failed for ${generatorKey}`, repairErr);
+                        }
+                    }
 
-                        // Capture Recommended Variables for Stage 1
-                        if (generatorKey === 'execute_coding.stage1.env' && parsed.recommended_variables) {
-                            await db.collection('project_features').updateOne(
-                                { project_id: new ObjectId(projectId), feature_key: 'execute_coding' },
-                                { $set: { 'recommended_env_vars': parsed.recommended_variables } }
-                            );
+                    if (parsed) {
+                        if (generatorKey === 'execute_coding.stage2') {
+                            console.log("[Stage 2 Debug] Parsed JSON:\n", JSON.stringify(parsed, null, 2));
                         }
 
-                    } catch (e) { console.error("Generator parse error", e); }
+                        if (parsed.prompts) allPrompts.push(...parsed.prompts);
+
+                        // Capture Recommended Variables for Stage 1 (Fix extraction logic)
+                        if (generatorKey === 'execute_coding.stage1.env' && parsed.prompts && parsed.prompts.length > 0) {
+                            try {
+                                const promptEntry = parsed.prompts[0];
+                                let promptJson: any = {};
+
+                                if (typeof promptEntry.prompt_text === 'string') {
+                                    try {
+                                        promptJson = JSON.parse(promptEntry.prompt_text);
+                                    } catch (jsonErr) {
+                                        // Attempt to clean if markdown present inside string
+                                        const clean = promptEntry.prompt_text.replace(/```json\n?|\n?```/g, '').trim();
+                                        try { promptJson = JSON.parse(clean); } catch (e) { console.warn("Failed to parse inner prompt json string", e); }
+                                    }
+                                } else if (typeof promptEntry.prompt_text === 'object') {
+                                    // AI returned object directly instead of stringified JSON
+                                    promptJson = promptEntry.prompt_text;
+                                    // Ensure it's stored as string in DB
+                                    promptEntry.prompt_text = JSON.stringify(promptJson, null, 2);
+                                }
+
+                                if (promptJson.ENV) {
+                                    await db.collection('project_features').updateOne(
+                                        { project_id: new ObjectId(projectId), feature_key: 'execute_coding' },
+                                        { $set: { 'recommended_env_vars': promptJson.ENV } }
+                                    );
+                                }
+                            } catch (envErr) {
+                                console.warn("Failed to extract ENV vars from prompt text", envErr);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -392,8 +499,8 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
                 const nextId = promptsWithIds[idx + 1]._id.toString();
                 const nextTitle = promptsWithIds[idx + 1].title;
 
-                finalPromptText += `\n\n---\n\n**🤖 AUTOMATED HANDOFF**:\nGreat job! Your next task is ready.\n\n**INSTRUCTION**: Call the \`mcp.prompts.get\` tool (or equivalent) with the following argument to get your next instructions:\n\n\`\`\`json\n{\n  "name": "prompt://${nextId}"\n}\n\`\`\`\n\n(Task Title: "${nextTitle}")`;
-            } else {
+                finalPromptText += `\n\n---\n\n**🤖 AUTOMATED HANDOFF**:\nGreat job! Your next task is ready.\n\n**INSTRUCTION**: Call the promptsmith mcp with the following argument to get your next instructions:\n\n\`\`\`json\n{\n  "name": "prompt://${nextId}"\n}\n\`\`\`\n\n(Task Title: "${nextTitle}")`;
+            } else if (stage === 'execute_coding.stage3') {
                 finalPromptText += `\n\n---\n\n**✅ SEQUENCE COMPLETE**:\nAll generated coding tasks for this stage are finished.\n\n**INSTRUCTION**: Now run the project (e.g. \`npm run dev\`), verify the functionality, and **debug** any issues that arise. You have full autonomy to fix bugs now.`;
             }
 
@@ -416,26 +523,39 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         });
 
         if (formattedPrompts.length > 0) {
-            // Cleanup previous prompts for this stage to ensure idempotency (Latest Version Only)
-            await db.collection('generated_prompts').deleteMany({
-                project_id: new ObjectId(projectId),
-                stage: stage,
-                type: "CODING"
-            });
+            // Cleanup previous prompts for this stage to ensure idempotency
+            // For Stage 3 (Batching), ONLY clear on the first batch (offset 0)
+            const shouldClear = stage !== 'execute_coding.stage3' || (body.offset === 0 || !body.offset);
+
+            if (shouldClear) {
+                await db.collection('generated_prompts').deleteMany({
+                    project_id: new ObjectId(projectId),
+                    stage: stage,
+                    type: "CODING"
+                });
+            }
 
             // Insert with pre-defined _ids covers it
             await db.collection('generated_prompts').insertMany(formattedPrompts);
         }
 
         // Save Summary/Status for this stage
+        const isFinalBatch = stage !== 'execute_coding.stage3' || (pagination && pagination.isComplete);
+
         const updateDoc: any = {
-            [`stage_status.${stage.replace('.', '_')}`]: "COMPLETED",
+            [`stage_status.${stage.replace('.', '_')}`]: isFinalBatch ? "COMPLETED" : "IN_PROGRESS",
             updatedAt: new Date()
         };
 
         // IF FINAL STAGE, MARK FEATURE AS COMPLETE
-        if (stage === 'execute_coding.stage3') {
+        if (stage === 'execute_coding.stage3' && isFinalBatch) {
             updateDoc.generated_output = "COMPLETED"; // Flag for Dashboard Green Tick
+
+            // Update Project Modes Status
+            await db.collection('project_modes').updateOne(
+                { project_id: new ObjectId(projectId) },
+                { $set: { [`features.execute_coding.status`]: "COMPLETED" } }
+            );
         }
 
         await db.collection('project_features').updateOne(
@@ -446,11 +566,21 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
         return NextResponse.json({
             message: 'Prompts generated',
-            prompts: formattedPrompts
+            prompts: formattedPrompts,
+            pagination
         });
 
     } catch (error: any) {
         console.error('Error generating coding prompts:', error);
+        if (
+            error?.message?.includes('API key not valid') ||
+            error?.status === 'INVALID_ARGUMENT' ||
+            (error?.error && error.error.status === 'INVALID_ARGUMENT') ||
+            error?.status === 400
+        ) {
+            return NextResponse.json({ error: 'Your AI model configuration is invalid. Please check your API Key.' }, { status: 400 });
+        }
+
         // Handle Quota
         if (error?.status === 429 || error?.message?.includes('429')) {
             return NextResponse.json({ error: 'AI Quota Exceeded. Please wait.' }, { status: 429 });

@@ -12,6 +12,7 @@ import RulesTab from '@/app/components/features/RulesTab';
 import DataModelsTab from '@/app/components/features/DataModelsTab';
 import ApisTab from '@/app/components/features/ApisTab';
 import ExecuteCodingTab from '@/app/components/features/ExecuteCodingTab';
+import ProjectSidebar from '@/app/components/ProjectSidebar';
 
 async function getProject(id: string) {
     const cookieStore = await cookies();
@@ -181,51 +182,16 @@ export default async function ProjectDetailsPage(props: { params: Promise<{ id: 
             <div className="max-w-7xl mx-auto px-6 py-8">
                 <div className="grid grid-cols-12 gap-8">
                     {/* Sidebar Navigation */}
-                    <div className="col-span-3 space-y-2 sticky top-24 h-fit">
-                        {features.map((feature, idx) => {
-                            const isActive = feature.key === activeTab;
-                            const isCompleted = feature.status === 'COMPLETED';
-                            const isInProgress = projectMode?.features?.[feature.key]?.status === 'IN_PROGRESS';
-                            const isAccessible = feature.status !== 'PENDING' || isActive;
-
-                            return (
-                                <Link
-                                    key={feature.key}
-                                    href={isAccessible ? `/projects/${project._id}?tab=${feature.key}` : '#'}
-                                    className={`
-                                        block w-full text-left p-4 rounded-xl transition-all border
-                                        ${isActive
-                                            ? 'bg-blue-600/10 border-blue-500/50 text-blue-400'
-                                            : isAccessible
-                                                ? isInProgress
-                                                    ? 'bg-amber-500/5 border-amber-500/20 text-amber-500 hover:bg-amber-500/10'
-                                                    : 'bg-neutral-900/30 border-transparent hover:bg-neutral-800 hover:text-white text-neutral-400'
-                                                : 'bg-transparent border-transparent text-neutral-600 cursor-not-allowed'
-                                        }
-                                    `}
-                                >
-                                    <div className="flex items-center justify-between mb-1">
-                                        <span className="text-sm font-bold">{idx + 1}. {feature.name}</span>
-                                        {isCompleted ? (
-                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-emerald-500">
-                                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
-                                            </svg>
-                                        ) : isInProgress && !isActive && (
-                                            <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                                        )}
-                                    </div>
-                                    <div className="h-1 w-full bg-neutral-800 rounded-full overflow-hidden">
-                                        <div
-                                            className={`h-full transition-all duration-500 ${isCompleted ? 'bg-emerald-500 w-full' :
-                                                isActive ? 'bg-blue-500 w-1/2' :
-                                                    isInProgress ? 'bg-amber-500 w-1/2' : 'w-0'
-                                                }`}
-                                        />
-                                    </div>
-                                </Link>
-                            );
-                        })}
-                    </div>
+                    <ProjectSidebar
+                        projectId={project._id.toString()}
+                        features={features.map(f => ({
+                            key: f.key,
+                            name: f.name || '',
+                            enabled: f.enabled || false,
+                            status: f.status
+                        }))}
+                        activeTab={activeTab}
+                    />
 
                     {/* Main Content Area */}
                     <div className="col-span-9 space-y-8">

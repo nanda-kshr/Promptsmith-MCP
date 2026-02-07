@@ -49,19 +49,23 @@ export class GeminiManager {
         const modelName = await this.getDefaultModelName();
 
         try {
-            console.log("[Gemini] Generating content with system instruction:", systemInstruction);
-            console.log("[Gemini] Generating content with prompt:", prompt);
-            const response = await client.models.generateContent({
-                model: modelName,
-                config: systemInstruction ? { systemInstruction: systemInstruction } : undefined,
-                contents: [
-                    {
-                        role: 'user',
-                        parts: [{ text: prompt }]
-                    }
-                ]
-            });
-            // According to user example: console.log(response.text)
+            const timeoutPromise = (ms: number) => new Promise<any>((_, reject) => setTimeout(() => reject(new Error("Gemini Request Timeout")), ms));
+
+            // Wrap in 60s timeout
+            const response = await Promise.race([
+                client.models.generateContent({
+                    model: modelName,
+                    config: systemInstruction ? { systemInstruction: systemInstruction } : undefined,
+                    contents: [
+                        {
+                            role: 'user',
+                            parts: [{ text: prompt }]
+                        }
+                    ]
+                }),
+                timeoutPromise(60000)
+            ]);
+
             return response.text;
 
         } catch (error) {
@@ -73,13 +77,12 @@ export class GeminiManager {
     static async generateWithRetry(userId: string, prompt: string, systemInstruction?: string, retries = 2): Promise<string | null> {
         const { optimizePrompt } = await import('./promptOptimizer');
         let currentPrompt = prompt;
-        console.log("[Gemini] Generating content with prompt:", currentPrompt);
 
         for (let i = 0; i <= retries; i++) {
             try {
                 return await this.generateContent(userId, currentPrompt, systemInstruction);
             } catch (error: any) {
-                const isOverloaded = error?.status === 503 || error?.code === 503 || error?.message?.includes('503') || error?.message?.includes('overloaded');
+                const isOverloaded = error?.status === 503 || error?.code === 503 || error?.message?.includes('503') || error?.message?.includes('overloaded') || error?.message?.includes('Timeout');
 
                 if (isOverloaded && i < retries) {
                     console.log(`[Gemini] Overloaded (Attempt ${i + 1}/${retries + 1}). Optimizing prompt and retrying...`);
@@ -98,5 +101,49 @@ export class GeminiManager {
             }
         }
         return null; // Should not reach here
+    }
+
+    static async repairJson(userId: string, malformedJson: string): Promise<any> {
+        console.log("[Gemini] Attempting to repair malformed JSON...");
+        const prompt = `You are a strict JSON syntax fixer.
+The following text is supposed to be valid JSON but has syntax errors, extra text, or markdown formatting.
+Return ONLY the raw JSON object/array. 
+rules:
+- Remove any markdown code blocks (e.g. \`\`\`json)
+- Remove any text before the first '{' or '['
+- Remove any text after the last '}' or ']'
+- Ensure all keys and string values are double-quoted
+- Fix trailing commas
+- Escape unescaped quotes within strings
+
+MALFORMED TEXT:
+${malformedJson}`;
+
+        const cleaned = await this.generateContent(userId, prompt);
+        if (!cleaned) throw new Error("Failed to repair JSON: Empty response");
+
+        // Try to parse the cleaned version
+        // Find first { or [
+        const firstBrace = cleaned.indexOf('{');
+        const firstBracket = cleaned.indexOf('[');
+        let start = -1;
+
+        if (firstBrace === -1 && firstBracket === -1) throw new Error("Repaired output does not contain JSON");
+
+        if (firstBrace !== -1 && firstBracket !== -1) {
+            start = Math.min(firstBrace, firstBracket);
+        } else {
+            start = Math.max(firstBrace, firstBracket);
+        }
+
+        // Find last } or ]
+        const lastBrace = cleaned.lastIndexOf('}');
+        const lastBracket = cleaned.lastIndexOf(']');
+        const end = Math.max(lastBrace, lastBracket);
+
+        if (start === -1 || end === -1 || end < start) throw new Error("Repaired output bounds invalid");
+
+        const jsonStr = cleaned.substring(start, end + 1);
+        return JSON.parse(jsonStr);
     }
 }

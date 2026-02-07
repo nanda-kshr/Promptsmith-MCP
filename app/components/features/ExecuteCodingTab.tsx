@@ -28,83 +28,130 @@ export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodi
     // Load status from initialData to determine current active stage
     const [completedStageIndex, setCompletedStageIndex] = useState(0);
 
-    // Initial Fetch
-    useEffect(() => {
-        const loadState = async () => {
-            try {
-                const res = await fetch(`/api/projects/${projectId}/execute_coding`);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.prompts) setPrompts(data.prompts);
+    // Load State Function
+    const loadState = async () => {
+        try {
+            const res = await fetch(`/api/projects/${projectId}/execute_coding`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.prompts) setPrompts(data.prompts);
 
-                    if (data.stage_status) {
-                        // Calculate completed index based on status
-                        let maxCompleted = -1;
-                        STAGES.forEach((stage, idx) => {
-                            const statusKey = stage.key.replace('.', '_'); // match DB key format
-                            if (data.stage_status[statusKey] === 'COMPLETED') {
-                                maxCompleted = idx;
-                            }
-                        });
+                if (data.stage_status) {
+                    // Calculate completed index based on status
+                    let maxCompleted = -1;
+                    STAGES.forEach((stage, idx) => {
+                        const statusKey = stage.key.replace('.', '_'); // match DB key format
+                        if (data.stage_status[statusKey] === 'COMPLETED') {
+                            maxCompleted = idx;
+                        }
+                    });
 
 
-                        const nextStage = Math.min(maxCompleted + 1, STAGES.length);
-                        setCompletedStageIndex(nextStage);
-                        setCurrentStageIndex(Math.min(nextStage, STAGES.length - 1)); // Current active stays valid
-
-                    }
+                    const nextStage = Math.min(maxCompleted + 1, STAGES.length);
+                    setCompletedStageIndex(nextStage);
+                    // We only set currentStageIndex on initial load to avoid jumping while user is viewing
                 }
-            } catch (e) {
-                console.error("Failed to load state", e);
             }
-        };
+        } catch (e) {
+            console.error("Failed to load state", e);
+        }
+    };
+
+    // Initial Fetch & Auto Refresh
+    useEffect(() => {
         loadState();
+        setCurrentStageIndex(0); // Default start
+
+        const interval = setInterval(loadState, 60000); // 60s Auto-Refresh
+        return () => clearInterval(interval);
     }, [projectId]);
 
     const handleRunStage = async (stageKey: string, autoAdvance = false) => {
         setLoading(true);
         setError(null);
+
+        // Optimistically clear local prompts for this stage
+        setPrompts(prev => prev.filter(p => p.stage !== stageKey));
+
         try {
-            const res = await fetch(`/api/projects/${projectId}/execute_coding`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    stage: stageKey,
-                    file_structure: "assume_empty" // TODO: Real file check
-                })
-            });
+            if (stageKey === 'execute_coding.stage3') {
+                // --- BATCH MODE ---
+                let offset = 0;
+                let isComplete = false;
 
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.error || 'Failed');
-            }
+                while (!isComplete) {
+                    const res = await fetch(`/api/projects/${projectId}/execute_coding`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            stage: stageKey,
+                            action: 'generate',
+                            offset,
+                            limit: 5
+                        })
+                    });
 
-            const data = await res.json();
+                    if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.error || 'Batch Failed');
+                    }
 
-            // Update prompts: Remove old prompts for this stage to avoid duplication, then append new ones
-            if (data.prompts) {
-                setPrompts(prev => {
-                    const others = prev.filter(p => p.stage !== stageKey);
-                    return [...others, ...data.prompts];
+                    const data = await res.json();
+
+                    if (data.prompts) {
+                        setPrompts(prev => {
+                            // Dedupe to be safe
+                            const newIds = new Set(data.prompts.map((p: any) => p._id));
+                            const kept = prev.filter(p => !newIds.has(p._id));
+                            return [...kept, ...data.prompts];
+                        });
+                    }
+
+                    if (data.pagination) {
+                        offset = data.pagination.nextOffset;
+                        isComplete = data.pagination.isComplete;
+                    } else {
+                        isComplete = true;
+                    }
+                }
+            } else {
+                // --- STANDARD MODE ---
+                const res = await fetch(`/api/projects/${projectId}/execute_coding`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        stage: stageKey,
+                        action: 'generate'
+                    })
                 });
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.error || 'Failed');
+                }
+
+                const data = await res.json();
+
+                // Update prompts: append new ones
+                if (data.prompts) {
+                    setPrompts(prev => [...prev, ...data.prompts]);
+                }
             }
 
             let nextIndex = currentStageIndex;
 
             // Mark current stage as complete (allow navigation up to this point + 1)
-            // Mark current stage as complete (allow navigation up to this point + 1)
             const stageIndex = STAGES.findIndex(s => s.key === stageKey);
-            if (stageIndex >= completedStageIndex) {
-                setCompletedStageIndex(Math.min(stageIndex + 1, STAGES.length));
+
+            // Update completed status safely
+            setCompletedStageIndex(prev => Math.max(prev, stageIndex + 1));
+
+            // Auto-advance logic: Go to next stage based on what just finished
+            if (stageIndex < STAGES.length - 1) {
+                setCurrentStageIndex(stageIndex + 1);
             }
 
-            // Auto-advance logic: strict bounds check
-            if (currentStageIndex < STAGES.length - 1) {
-                nextIndex = currentStageIndex + 1;
-                setCurrentStageIndex(nextIndex);
-            }
-
-            return nextIndex; // Return the next index for chaining
+            return stageIndex + 1; // Return the next index for chaining
 
         } catch (err: any) {
             setError(err.message);
@@ -118,37 +165,34 @@ export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodi
         setLoading(true);
         setError(null);
 
-        let activeIdx = currentStageIndex;
-        // If at Stage 0, run it first
-        if (activeIdx === 0) {
-            try {
-                activeIdx = await handleRunStage(STAGES[0].key, true);
-                if (activeIdx === 0) { // Failed to advance
-                    setLoading(false);
-                    return;
-                }
-            } catch (e) {
-                setLoading(false);
-                return;
-            }
-        }
-
         try {
-            // Loop until end
-            for (let i = activeIdx; i < STAGES.length; i++) {
-                // Determine the next stage to run based on loop index
-                // Note: handleRunStage updates state, but for the loop we use 'i'
+            // 1. Trigger Reset on Backend
+            const resetRes = await fetch(`/api/projects/${projectId}/execute_coding`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'reset' })
+            });
 
+            if (!resetRes.ok) throw new Error("Failed to reset project state");
+
+            // 2. Reset Local State
+            setPrompts([]);
+            setCompletedStageIndex(0);
+            setCurrentStageIndex(0);
+
+            // 3. Sequential Generation Loop from Stage 0
+            for (let i = 0; i < STAGES.length; i++) {
                 await handleRunStage(STAGES[i].key, true);
 
                 // Small delay to let UI breathe
                 await new Promise(r => setTimeout(r, 1000));
-                // If we reached the end successfully
+
                 if (i === STAGES.length - 1) {
                     setLoading(false);
                 }
             }
-        } catch (e) {
+        } catch (e: any) {
+            setError(e.message);
             setLoading(false);
         } finally {
             router.refresh();
@@ -248,8 +292,8 @@ export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodi
                         <div className="flex items-center justify-between mb-6">
                             <h3 className="font-bold text-xl">{STAGES[currentStageIndex]?.label || "Completed"}</h3>
                             <div className="flex gap-3">
-                                {/* Show "Save & Complete" for Stage 3 (or generally if prompts exist) */}
-                                {prompts.filter(p => p.stage === STAGES[currentStageIndex]?.key).length > 0 && (
+                                {/* Show "Save & Complete" only if prompts exist AND it's not already completed */}
+                                {prompts.filter(p => p.stage === STAGES[currentStageIndex]?.key).length > 0 && completedStageIndex <= currentStageIndex && (
                                     <button
                                         disabled={loading}
                                         onClick={() => handleCompleteStage(STAGES[currentStageIndex].key)}
@@ -258,6 +302,16 @@ export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodi
                                         {loading ? 'Saving...' : 'Save & Complete'}
                                     </button>
                                 )}
+
+                                <button
+                                    onClick={loadState}
+                                    title="Refresh Prompts"
+                                    className="p-2 rounded-lg bg-neutral-800 border border-neutral-700 hover:bg-neutral-700 text-neutral-400 hover:text-white transition-colors"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                        <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0v2.433l-.31-.31a7 7 0 00-11.712 3.138.75.75 0 001.449.39 5.5 5.5 0 019.201-2.466l.312.312h-2.433a.75.75 0 000 1.5h4.185a.75.75 0 00.75-.75z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
 
                                 <button
                                     onClick={() => handleRunStage(STAGES[currentStageIndex].key)}
