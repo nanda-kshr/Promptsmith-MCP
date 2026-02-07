@@ -17,7 +17,7 @@ const https = require('https');
 const readline = require('readline');
 
 // Config
-const BASE_URL = process.argv[2] || "http://127.0.0.1:3000/api/mcp";
+const BASE_URL = process.argv[2] || "https://promptsmith-mcp-three.vercel.app/api/mcp/sse";
 const AUTH_TOKEN = process.argv[3]; // Optional Token
 
 const SSE_URL = `${BASE_URL}/sse`;
