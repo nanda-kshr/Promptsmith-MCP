@@ -13,6 +13,7 @@ export async function OPTIONS() {
 }
 
 export async function POST(req: Request) {
+    console.log(`[MCP Messages] POST request received`);
     try {
         // --- AUTHENTICATION CHECK ---
         const url = new URL(req.url);
@@ -21,8 +22,10 @@ export async function POST(req: Request) {
         const tokenToken = url.searchParams.get("token");
 
         const token = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : tokenToken;
+        console.log(`[MCP Messages] Token found: ${!!token}, Query Token: ${!!tokenToken}`);
 
         if (!token) {
+            console.warn(`[MCP Messages] Unauthorized: Missing Token`);
             return new Response(JSON.stringify({ error: "Unauthorized: Missing Token" }), {
                 status: 401,
                 headers: { ...corsHeaders, "Content-Type": "application/json" }
@@ -31,6 +34,7 @@ export async function POST(req: Request) {
 
         const decoded = verifyToken(token);
         if (!decoded) {
+            console.warn(`[MCP Messages] Unauthorized: Invalid Token`);
             return new Response(JSON.stringify({ error: "Unauthorized: Invalid Token" }), {
                 status: 401,
                 headers: { ...corsHeaders, "Content-Type": "application/json" }
@@ -38,8 +42,10 @@ export async function POST(req: Request) {
         }
 
         const sessionId = url.searchParams.get("sessionId");
+        console.log(`[MCP Messages] sessionId: ${sessionId}`);
 
         if (!sessionId) {
+            console.warn(`[MCP Messages] Missing sessionId`);
             return new Response(JSON.stringify({ error: "Missing sessionId" }), {
                 status: 400,
                 headers: { ...corsHeaders, "Content-Type": "application/json" }
@@ -49,6 +55,7 @@ export async function POST(req: Request) {
         const transport = global.mcpTransports?.get(sessionId);
 
         if (!transport) {
+            console.warn(`[MCP Messages] Session ${sessionId} not found`);
             return new Response(JSON.stringify({ error: "Session not found" }), {
                 status: 404,
                 headers: { ...corsHeaders, "Content-Type": "application/json" }
@@ -56,6 +63,7 @@ export async function POST(req: Request) {
         }
 
         const body = await req.json();
+        console.log(`[MCP Messages] Handling message for session ${sessionId}`);
         await transport.handleMessage(body);
 
         return new Response(JSON.stringify({ status: "accepted" }), {

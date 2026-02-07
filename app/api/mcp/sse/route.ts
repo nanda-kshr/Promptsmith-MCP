@@ -17,22 +17,29 @@ export async function OPTIONS() {
 }
 
 export async function POST(req: Request) {
+    console.log(`[MCP SSE] POST request received`);
     try {
         const url = new URL(req.url);
         const sessionId = url.searchParams.get("sessionId");
+        console.log(`[MCP SSE] sessionId: ${sessionId}`);
+
         if (!sessionId) {
+            console.warn(`[MCP SSE] Missing sessionId in POST`);
             return new Response(JSON.stringify({ error: "Missing sessionId" }), { status: 400, headers: corsHeaders });
         }
 
         const transport = global.mcpTransports?.get(sessionId);
         if (!transport) {
+            console.warn(`[MCP SSE] Session ${sessionId} not found`);
             return new Response(JSON.stringify({ error: "Session not found" }), { status: 404, headers: corsHeaders });
         }
 
         const body = await req.json();
+        console.log(`[MCP SSE] Handling message for session ${sessionId}`);
         await transport.handleMessage(body);
         return new Response(JSON.stringify({ status: "accepted" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     } catch (error: any) {
+        console.error(`[MCP SSE] Error:`, error);
         return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
     }
 }
@@ -46,8 +53,10 @@ export async function GET(req: Request) {
         const tokenToken = url.searchParams.get("token");
 
         const token = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : tokenToken;
+        console.log(`[MCP SSE] GET request. Token found: ${!!token}, Query Token: ${!!tokenToken}`);
 
         if (!token) {
+            console.warn(`[MCP SSE] Unauthorized: Missing Token`);
             return new Response(JSON.stringify({ error: "Unauthorized: Missing Token" }), {
                 status: 401,
                 headers: { ...corsHeaders, "Content-Type": "application/json" }
