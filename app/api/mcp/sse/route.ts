@@ -21,18 +21,18 @@ export async function GET(req: Request) {
         }
 
         const token = authHeader.split(" ")[1];
-        const decoded = verifyToken(token);
+        const decoded = verifyToken(token) as any;
 
-        if (!decoded) {
-            return new Response(JSON.stringify({ error: "Unauthorized: Invalid Token" }), {
+        if (!decoded || !decoded.userId) {
+            return new Response(JSON.stringify({ error: "Unauthorized: Invalid Token or UserID" }), {
                 status: 401,
                 headers: { "Content-Type": "application/json" }
             });
         }
 
-        console.log(`[MCP] Authorized connection for user: ${(decoded as any).userId || 'unknown'}`);
+        console.log(`[MCP] Authorized connection for user: ${decoded.userId}`);
 
-        const server = createMcpServer();
+        const server = createMcpServer(decoded.userId);
 
         if (!global.mcpTransports) {
             global.mcpTransports = new Map();
