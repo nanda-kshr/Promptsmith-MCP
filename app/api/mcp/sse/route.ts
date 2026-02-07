@@ -36,8 +36,17 @@ export async function POST(req: Request) {
         if (!sessionId && token) {
             const decoded = verifyToken(token) as any;
             if (decoded?.userId) {
+                console.log(`[MCP SSE] Looking up session for userId: ${decoded.userId}`);
+                console.log(`[MCP SSE] Current mcpUserSessions keys: ${Array.from(mcpUserSessions.keys())}`);
+
                 sessionId = mcpUserSessions.get(decoded.userId) || null;
-                console.log(`[MCP SSE] Fallback: Found sessionId ${sessionId} for userId ${decoded.userId}`);
+
+                if (!sessionId && mcpTransports.size === 1) {
+                    sessionId = Array.from(mcpTransports.keys())[0];
+                    console.log(`[MCP SSE] Extreme Fallback: Only one session exists, using ${sessionId}`);
+                }
+
+                console.log(`[MCP SSE] Fallback result: ${sessionId}`);
             }
         }
 
@@ -65,6 +74,7 @@ export async function POST(req: Request) {
 }
 
 export async function GET(req: Request) {
+    console.log(`[MCP SSE] GET connection attempt`);
     try {
         // --- AUTHENTICATION CHECK ---
         const url = new URL(req.url);
@@ -93,7 +103,7 @@ export async function GET(req: Request) {
             });
         }
 
-        console.log(`[MCP] Authorized connection for user: ${decoded.userId}`);
+        console.log(`[MCP SSE] Authorized connection for user: ${decoded.userId}`);
 
         const server = createMcpServer(decoded.userId);
 
@@ -124,6 +134,7 @@ export async function GET(req: Request) {
         mcpTransports.set(transport.sessionId, transport);
         mcpUserSessions.set(decoded.userId, transport.sessionId);
         console.log(`[MCP SSE] Session created: ${transport.sessionId} for user: ${decoded.userId}`);
+        console.log(`[MCP SSE] Current global mcpUserSessions keys: ${Array.from(mcpUserSessions.keys())}`);
 
         await server.connect(transport);
 
