@@ -6,27 +6,60 @@ import { headers } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
+const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+export async function OPTIONS() {
+    return new Response(null, { headers: corsHeaders });
+}
+
+export async function POST(req: Request) {
+    try {
+        const url = new URL(req.url);
+        const sessionId = url.searchParams.get("sessionId");
+        if (!sessionId) {
+            return new Response(JSON.stringify({ error: "Missing sessionId" }), { status: 400, headers: corsHeaders });
+        }
+
+        const transport = global.mcpTransports?.get(sessionId);
+        if (!transport) {
+            return new Response(JSON.stringify({ error: "Session not found" }), { status: 404, headers: corsHeaders });
+        }
+
+        const body = await req.json();
+        await transport.handleMessage(body);
+        return new Response(JSON.stringify({ status: "accepted" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    } catch (error: any) {
+        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+    }
+}
+
 export async function GET(req: Request) {
     try {
         // --- AUTHENTICATION CHECK ---
+        const url = new URL(req.url);
         const headersList = await headers();
         const authHeader = headersList.get("authorization");
+        const tokenToken = url.searchParams.get("token");
 
-        // Allow if no auth system is enforced yet? No, user asked for it.
-        if (!authHeader || !authHeader.startsWith("Bearer ")) {
-            return new Response(JSON.stringify({ error: "Unauthorized: Missing Bearer Token" }), {
+        const token = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : tokenToken;
+
+        if (!token) {
+            return new Response(JSON.stringify({ error: "Unauthorized: Missing Token" }), {
                 status: 401,
-                headers: { "Content-Type": "application/json" }
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
             });
         }
 
-        const token = authHeader.split(" ")[1];
         const decoded = verifyToken(token) as any;
 
         if (!decoded || !decoded.userId) {
-            return new Response(JSON.stringify({ error: "Unauthorized: Invalid Token or UserID" }), {
+            return new Response(JSON.stringify({ error: "Unauthorized: Invalid Token" }), {
                 status: 401,
-                headers: { "Content-Type": "application/json" }
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
             });
         }
 
@@ -67,6 +100,7 @@ export async function GET(req: Request) {
 
         return new Response(stream.readable, {
             headers: {
+                ...corsHeaders,
                 "Content-Type": "text/event-stream",
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
@@ -76,7 +110,7 @@ export async function GET(req: Request) {
         console.error("MCP SSE Error:", error);
         return new Response(JSON.stringify({ error: error.message }), {
             status: 500,
-            headers: { "Content-Type": "application/json" }
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
         });
     }
 }

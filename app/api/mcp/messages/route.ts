@@ -1,47 +1,71 @@
-
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { verifyToken } from "@/app/lib/jwt";
 
-export const dynamic = "force-dynamic";
+const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+export async function OPTIONS() {
+    return new Response(null, { headers: corsHeaders });
+}
 
 export async function POST(req: Request) {
-    // --- AUTHENTICATION CHECK ---
-    const headersList = await headers();
-    const authHeader = headersList.get("authorization");
-
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        return NextResponse.json({ error: "Unauthorized: Missing Bearer Token" }, { status: 401 });
-    }
-
-    const token = authHeader.split(" ")[1];
-    const decoded = verifyToken(token);
-
-    if (!decoded) {
-        return NextResponse.json({ error: "Unauthorized: Invalid Token" }, { status: 401 });
-    }
-
-    const url = new URL(req.url);
-    const sessionId = url.searchParams.get("sessionId");
-
-    if (!sessionId) {
-        return NextResponse.json({ error: "Missing sessionId" }, { status: 400 });
-    }
-
-    const transport = global.mcpTransports?.get(sessionId);
-
-    if (!transport) {
-        return NextResponse.json({ error: "Session not found" }, { status: 404 });
-    }
-
     try {
+        // --- AUTHENTICATION CHECK ---
+        const url = new URL(req.url);
+        const headersList = await headers();
+        const authHeader = headersList.get("authorization");
+        const tokenToken = url.searchParams.get("token");
+
+        const token = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : tokenToken;
+
+        if (!token) {
+            return new Response(JSON.stringify({ error: "Unauthorized: Missing Token" }), {
+                status: 401,
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
+        }
+
+        const decoded = verifyToken(token);
+        if (!decoded) {
+            return new Response(JSON.stringify({ error: "Unauthorized: Invalid Token" }), {
+                status: 401,
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
+        }
+
+        const sessionId = url.searchParams.get("sessionId");
+
+        if (!sessionId) {
+            return new Response(JSON.stringify({ error: "Missing sessionId" }), {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
+        }
+
+        const transport = global.mcpTransports?.get(sessionId);
+
+        if (!transport) {
+            return new Response(JSON.stringify({ error: "Session not found" }), {
+                status: 404,
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
+        }
+
         const body = await req.json();
         await transport.handleMessage(body);
 
-        return NextResponse.json({ status: "accepted" });
+        return new Response(JSON.stringify({ status: "accepted" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
     } catch (error: any) {
         console.error("MCP Message Error:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return new Response(JSON.stringify({ error: error.message }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" }
+        });
     }
 }
