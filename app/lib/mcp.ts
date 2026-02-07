@@ -5,17 +5,7 @@ import { z } from "zod";
 import { getDb } from "./mongo";
 import { ObjectId } from "mongodb";
 
-// --- GLOBAL STATE FOR VERCEL ---
-// In a serverless environment, this map will be cleared frequently.
-// However, for local development (npm run dev) and short-lived sessions, this works.
-// In a real production deployment, you'd need a Redis backing or similar.
-declare global {
-    var mcpTransports: Map<string, SSEServerTransport>;
-}
-
-if (!global.mcpTransports) {
-    global.mcpTransports = new Map();
-}
+// --- MCP Server Logic ---
 
 /**
  * Creates and configures the MCP Server instance.

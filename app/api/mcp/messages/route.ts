@@ -1,6 +1,7 @@
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { headers } from "next/headers";
 import { verifyToken } from "@/app/lib/jwt";
+import { mcpTransports } from "@/app/lib/mcp_state";
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -52,7 +53,7 @@ export async function POST(req: Request) {
             });
         }
 
-        const transport = global.mcpTransports?.get(sessionId);
+        const transport = mcpTransports.get(sessionId);
 
         if (!transport) {
             console.warn(`[MCP Messages] Session ${sessionId} not found`);

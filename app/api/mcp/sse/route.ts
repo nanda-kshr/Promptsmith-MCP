@@ -1,8 +1,8 @@
-
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createMcpServer } from "@/app/lib/mcp";
 import { verifyToken } from "@/app/lib/jwt";
 import { headers } from "next/headers";
+import { mcpTransports, mcpUserSessions } from "@/app/lib/mcp_state";
 
 export const dynamic = "force-dynamic";
 
@@ -11,14 +11,6 @@ const corsHeaders = {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
-
-declare global {
-    var mcpUserSessions: Map<string, string>;
-}
-
-if (!global.mcpUserSessions) {
-    global.mcpUserSessions = new Map();
-}
 
 export async function OPTIONS() {
     return new Response(null, { headers: corsHeaders });
@@ -44,7 +36,7 @@ export async function POST(req: Request) {
         if (!sessionId && token) {
             const decoded = verifyToken(token) as any;
             if (decoded?.userId) {
-                sessionId = global.mcpUserSessions.get(decoded.userId) || null;
+                sessionId = mcpUserSessions.get(decoded.userId) || null;
                 console.log(`[MCP SSE] Fallback: Found sessionId ${sessionId} for userId ${decoded.userId}`);
             }
         }
@@ -56,9 +48,9 @@ export async function POST(req: Request) {
             return new Response(JSON.stringify({ error: "Missing sessionId" }), { status: 400, headers: corsHeaders });
         }
 
-        const transport = global.mcpTransports?.get(sessionId);
+        const transport = mcpTransports.get(sessionId);
         if (!transport) {
-            console.warn(`[MCP SSE] Session ${sessionId} not found`);
+            console.warn(`[MCP SSE] Session ${sessionId} not found. Active sessions: ${Array.from(mcpTransports.keys())}`);
             return new Response(JSON.stringify({ error: "Session not found" }), { status: 404, headers: corsHeaders });
         }
 
@@ -105,10 +97,6 @@ export async function GET(req: Request) {
 
         const server = createMcpServer(decoded.userId);
 
-        if (!global.mcpTransports) {
-            global.mcpTransports = new Map();
-        }
-
         const stream = new TransformStream();
         const writer = stream.writable.getWriter();
 
@@ -133,8 +121,9 @@ export async function GET(req: Request) {
         // Point both ends to the same route for simplicity and compatibility
         const transport = new SSEServerTransport("/api/mcp/sse", mockRes);
 
-        global.mcpTransports.set(transport.sessionId, transport);
-        global.mcpUserSessions.set(decoded.userId, transport.sessionId);
+        mcpTransports.set(transport.sessionId, transport);
+        mcpUserSessions.set(decoded.userId, transport.sessionId);
+        console.log(`[MCP SSE] Session created: ${transport.sessionId} for user: ${decoded.userId}`);
 
         await server.connect(transport);
 
