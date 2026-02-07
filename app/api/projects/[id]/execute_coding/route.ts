@@ -129,7 +129,15 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         const { GeminiManager } = await import('@/app/lib/gemini');
 
         // --- SUB-GENERATOR MAPPING ---
+        const STAGE_ORDER: Record<string, number> = {
+            'execute_coding.check': 0,
+            'execute_coding.stage1': 10,
+            'execute_coding.stage2': 20,
+            'execute_coding.stage3': 30, // Batch will have many files, so we use a larger gap if needed, but 10 is fine if we use idx
+        };
+
         // --- SUB-GENERATOR MAPPING ---
+
         const SUB_GENERATORS: Record<string, string[]> = {
             'execute_coding.check': ['execute_coding.check'],
             'execute_coding.stage1': ['execute_coding.stage1.env'],
@@ -369,6 +377,9 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         const formattedPrompts = promptsWithIds.map((p: any, idx: number) => {
             // 4. SECOND PASS CONTEXT INJECTION (If Batch Generator used placeholders)
             let finalPromptText = p.prompt_text;
+            if (stage === 'execute_coding.check') {
+                finalPromptText = "Check and if didnt do, do these initially to ensure the codebase is ready to start developing\n\n" + finalPromptText;
+            }
             if (stage === 'execute_coding.stage3') {
                 finalPromptText = finalPromptText
                     .replace('{{tech_stack}}', getOutput('tech_choices'))
@@ -392,8 +403,9 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
                 type: "CODING",
                 stage: stage,
                 sub_stage: 'generated',
-                sequence: idx,
+                sequence: (STAGE_ORDER[stage] || 0) * 1000 + idx,
                 title: p.title,
+
                 prompt_text: finalPromptText,
                 status: "PENDING",
                 metadata: {

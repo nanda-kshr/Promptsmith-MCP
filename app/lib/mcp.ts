@@ -127,26 +127,30 @@ export const createMcpServer = (userId: string) => {
                     status: { $ne: 'COMPLETED' }
                 })
                 .sort({ sequence: 1 })
-                .limit(limit)
+                .limit(2) // Get next 2 to see if there's more
                 .toArray();
 
             if (tasks.length === 0) {
-                return { content: [{ type: "text", text: "No pending tasks found." }] };
+                return { content: [{ type: "text", text: "All tasks completed! Now run the project and verify if everything works as expected." }] };
+            }
+
+            const currentTask = tasks[0];
+            const hasMore = tasks.length > 1;
+
+            let message = `### NEXT ACTION (Sequence: ${currentTask.sequence})\n\n`;
+            message += `**Title**: ${currentTask.title}\n\n`;
+            message += `**Instructions**:\n1. Read the prompt content from: \`prompt://${currentTask._id}\`\n`;
+            message += `2. Execute the task.\n`;
+            message += `3. IMPORTANT: When finished, call tool \`mark_task_complete(promptId: "${currentTask._id}", projectId: "${projectId}")\`.\n`;
+
+            if (hasMore) {
+                message += `4. Then call \`get_pending_tasks\` again to receive your next assignment.\n`;
+            } else {
+                message += `4. This is the last task in the current sequence. After completing it, run and verify the project.\n`;
             }
 
             return {
-                content: [
-                    {
-                        type: "text",
-                        text: JSON.stringify(tasks.map(t => ({
-                            id: t._id,
-                            title: t.title,
-                            status: t.status,
-                            sequence: t.sequence,
-                            prompt_access_uri: `prompt://${t._id}`
-                        })), null, 2)
-                    }
-                ]
+                content: [{ type: "text", text: message }]
             };
         }
     );

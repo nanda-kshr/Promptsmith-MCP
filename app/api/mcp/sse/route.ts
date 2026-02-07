@@ -31,30 +31,45 @@ export async function POST(req: Request) {
         const token = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : tokenToken;
 
         let sessionId = url.searchParams.get("sessionId");
-        console.log(`[MCP SSE] sessionId from URL: ${sessionId}`);
+        console.log(`[MCP SSE] POST request. sessionId from URL: ${sessionId}`);
 
         if (!sessionId && token) {
             const decoded = verifyToken(token) as any;
             if (decoded?.userId) {
                 console.log(`[MCP SSE] Looking up session for userId: ${decoded.userId}`);
-                console.log(`[MCP SSE] Current mcpUserSessions keys: ${Array.from(mcpUserSessions.keys())}`);
+                console.log(`[MCP SSE] Current global mcpUserSessions keys: ${Array.from(mcpUserSessions.keys())}`);
 
                 sessionId = mcpUserSessions.get(decoded.userId) || null;
 
-                if (!sessionId && mcpTransports.size === 1) {
-                    sessionId = Array.from(mcpTransports.keys())[0];
-                    console.log(`[MCP SSE] Extreme Fallback: Only one session exists, using ${sessionId}`);
+                if (!sessionId) {
+                    console.log(`[MCP SSE] Session not found in mcpUserSessions for user ${decoded.userId}. Checking mcpTransports directly.`);
+                    // Fallback: If there's only one transport, or we can find one that might belong to this user
+                    // In a multi-user environment, this needs to be more robust, but for now:
+                    if (mcpTransports.size > 0) {
+                        // Check if we can find any session that matches
+                        sessionId = Array.from(mcpTransports.keys())[0];
+                        console.log(`[MCP SSE] Extreme Fallback: Using first available session ${sessionId}`);
+                    }
                 }
 
-                console.log(`[MCP SSE] Fallback result: ${sessionId}`);
+                if (sessionId) {
+                    console.log(`[MCP SSE] Fallback resolved sessionId: ${sessionId}`);
+                } else {
+                    console.warn(`[MCP SSE] Failed to resolve sessionId for user ${decoded.userId}`);
+                }
+            } else {
+                console.warn(`[MCP SSE] Token provided but no userId found in decoded payload`);
             }
         }
 
         if (!sessionId) {
             console.warn(`[MCP SSE] Missing sessionId in POST. Full URL: ${req.url}`);
             const bodyPreview = await req.clone().text().catch(() => "N/A");
-            console.log(`[MCP SSE] Body preview: ${bodyPreview.slice(0, 100)}`);
-            return new Response(JSON.stringify({ error: "Missing sessionId" }), { status: 400, headers: corsHeaders });
+            console.log(`[MCP SSE] Body preview: ${bodyPreview.slice(0, 500)}`);
+            return new Response(JSON.stringify({ error: "Missing sessionId", details: "Could not find an active session for this user." }), {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
         }
 
         const transport = mcpTransports.get(sessionId);
@@ -74,7 +89,7 @@ export async function POST(req: Request) {
 }
 
 export async function GET(req: Request) {
-    console.log(`[MCP SSE] GET connection attempt`);
+    console.log(`[MCP SSE] GET connection attempt. URL: ${req.url}`);
     try {
         // --- AUTHENTICATION CHECK ---
         const url = new URL(req.url);

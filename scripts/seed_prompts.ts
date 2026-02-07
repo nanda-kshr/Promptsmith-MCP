@@ -383,7 +383,7 @@ Output ONLY valid JSON containing EXACTLY ONE prompt:
   "prompts": [
     {
       "title": "Agent Pre-Flight Check",
-      "prompt_text": "Inspect the current folder..."
+      "prompt_text": "Inspect the current folder to ensure the project foundation is ready. Verify if the project is initialized according to the Tech Stack: {{tech_stack}}. If initialization is missing or incomplete, perform the necessary steps to set it up."
     }
   ]
 }`,
