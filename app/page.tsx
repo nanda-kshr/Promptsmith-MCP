@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import ProjectList from './components/ProjectList';
 import AuthTokenCard from './components/AuthTokenCard';
+import GeminiKeyCard from './components/GeminiKeyCard';
 import LogoutButton from './components/LogoutButton';
 
 export default async function Home() {
@@ -41,14 +42,10 @@ export default async function Home() {
             <ProjectList />
           </div>
 
-          {/* Sidebar (Right - Auth Token) */}
+          {/* Sidebar (Right - Auth Token & Gemini Key) */}
           <div className="lg:col-span-1 space-y-6">
             <AuthTokenCard />
-
-            {/* Additional sidebar items can go here */}
-            <div className="p-5 rounded-xl border border-dashed border-neutral-800 text-center">
-              <p className="text-xs text-neutral-600">More widgets coming soon...</p>
-            </div>
+            <GeminiKeyCard />
           </div>
         </div>
       </div>

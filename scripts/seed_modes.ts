@@ -21,13 +21,13 @@ const EXPERT_MODE = {
             method: "USER_INPUT",
             enabled: true
         },
-        data_models: {
-            name: "Data Models",
+        rules: {
+            name: "Rules",
             method: "USER_INPUT",
             enabled: true
         },
-        rules: {
-            name: "Rules",
+        data_models: {
+            name: "Data Models",
             method: "USER_INPUT",
             enabled: true
         },
@@ -38,7 +38,7 @@ const EXPERT_MODE = {
         },
         execute_coding: {
             name: "Execute Coding",
-            method: "EXECUTE",
+            method: "USER_INPUT",
             enabled: true
         },
         refactor: {

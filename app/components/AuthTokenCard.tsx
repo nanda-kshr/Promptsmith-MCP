@@ -6,6 +6,7 @@ export default function AuthTokenCard() {
     const [apiKey, setApiKey] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [isVisible, setIsVisible] = useState(false);
+    const [copied, setCopied] = useState(false);
 
     useEffect(() => {
         fetch('/api/user/me')
@@ -22,6 +23,14 @@ export default function AuthTokenCard() {
                 setLoading(false);
             });
     }, []);
+
+    const copyToClipboard = () => {
+        if (apiKey) {
+            navigator.clipboard.writeText(apiKey);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        }
+    };
 
     if (loading) return <div className="h-24 w-full bg-neutral-900 animate-pulse rounded-xl"></div>;
     if (!apiKey) return null;
@@ -53,19 +62,28 @@ export default function AuthTokenCard() {
             </div>
 
             <button
-                onClick={() => {
-                    if (apiKey) {
-                        navigator.clipboard.writeText(apiKey);
-                        // Optional: Show feedback, simpler to just rely on user knowing it works or adding small toast later
-                    }
-                }}
-                className="mt-3 w-full flex items-center justify-center gap-2 text-xs font-medium text-neutral-400 hover:text-white bg-neutral-800 hover:bg-neutral-700 py-2 rounded-lg transition-colors"
+                onClick={copyToClipboard}
+                className={`mt-3 w-full flex items-center justify-center gap-2 text-xs font-medium py-2 rounded-lg transition-all duration-200 ${copied
+                    ? "bg-green-900/30 text-green-400 border border-green-900/50"
+                    : "text-neutral-400 hover:text-white bg-neutral-800 hover:bg-neutral-700"
+                    }`}
             >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3">
-                    <path d="M7 3.5A1.5 1.5 0 018.5 2h3.879a1.5 1.5 0 011.06.44l3.122 3.12A1.5 1.5 0 0117 6.622V12.5a1.5 1.5 0 01-1.5 1.5h-1v-3.379a3 3 0 00-.879-2.121L10.5 5.379A3 3 0 008.379 4.5H7v-1z" />
-                    <path d="M4.5 6A1.5 1.5 0 003 7.5v9A1.5 1.5 0 004.5 18h7a1.5 1.5 0 001.5-1.5v-5.879a1.5 1.5 0 00-.44-1.06L9.44 6.439A1.5 1.5 0 008.379 6H4.5z" />
-                </svg>
-                Copy Token
+                {copied ? (
+                    <>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                        Copied!
+                    </>
+                ) : (
+                    <>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3">
+                            <path d="M7 3.5A1.5 1.5 0 018.5 2h3.879a1.5 1.5 0 011.06.44l3.122 3.12A1.5 1.5 0 0117 6.622V12.5a1.5 1.5 0 01-1.5 1.5h-1v-3.379a3 3 0 00-.879-2.121L10.5 5.379A3 3 0 008.379 4.5H7v-1z" />
+                            <path d="M4.5 6A1.5 1.5 0 003 7.5v9A1.5 1.5 0 004.5 18h7a1.5 1.5 0 001.5-1.5v-5.879a1.5 1.5 0 00-.44-1.06L9.44 6.439A1.5 1.5 0 008.379 6H4.5z" />
+                        </svg>
+                        Copy Token
+                    </>
+                )}
             </button>
 
             <p className="text-[10px] text-neutral-500 mt-3">

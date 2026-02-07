@@ -16,20 +16,17 @@ export async function GET(request: Request) {
         }
 
         // Test Gemini Manager
-        const model = await GeminiManager.getModel(payload.userId);
-
-        // Check internal property or response to guess model? 
-        // GoogleGenerativeAI model object usually has `model` property or similar config.
-        // Let's inspect it safely.
+        const client = await GeminiManager.getClient(payload.userId);
+        const modelName = await GeminiManager.getDefaultModelName();
 
         return NextResponse.json({
             message: 'Gemini Adapter Initialized Successfully',
-            cached: globalThis._geminiCache.has(payload.userId),
-            modelName: (model as any).model // Attempt to read model name
+            cached: globalThis._geminiCache.has(`gemini_${payload.userId}`),
+            modelName: modelName
         });
 
-    } catch (error) {
+    } catch (error: any) {
         console.error('Gemini Test Error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ error: error?.message || 'Internal Server Error' }, { status: 500 });
     }
 }

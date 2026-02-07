@@ -20,7 +20,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         }
 
         const body = await request.json();
-        const { purpose, problem_statement } = body;
+        const { user_input } = body;
 
         const db = await getDb();
 
@@ -32,8 +32,18 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
         if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
 
+        // Fetch Vision Data for Context
+        const visionFeature = await db.collection('project_features').findOne({
+            project_id: new ObjectId(projectId),
+            feature_key: 'vision'
+        });
+
+        const visionContext = visionFeature?.generated_output || '';
+        const purpose = visionFeature?.user_input?.purpose || '';
+        const problem_statement = visionFeature?.user_input?.problem_statement || '';
+
         // Fetch Prompt Config
-        const promptConfig = await db.collection('feature_prompts').findOne({ feature_key: 'vision' });
+        const promptConfig = await db.collection('feature_prompts').findOne({ feature_key: 'user_flow' });
 
         let generatedContent = null;
         if (promptConfig) {
@@ -41,31 +51,41 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             let userPrompt = promptConfig.user_template;
 
             // Replace Variables
-            userPrompt = userPrompt.replace('{{purpose}}', purpose)
-                .replace('{{problem_statement}}', problem_statement);
+            userPrompt = userPrompt.replace('{{vision_output}}', visionContext)
+                .replace('{{user_input}}', user_input);
 
             // Generate with Gemini
-            const { GeminiManager } = await import('@/app/lib/gemini');
-            generatedContent = await GeminiManager.generateContent(
-                payload.userId,
-                userPrompt, // prompt
-                systemPrompt // systemInstruction
-            );
+            try {
+                const { GeminiManager } = await import('@/app/lib/gemini');
+                generatedContent = await GeminiManager.generateContent(
+                    payload.userId,
+                    userPrompt,
+                    systemPrompt
+                );
+            } catch (geminiError: any) {
+                console.error('Gemini Generation Error:', geminiError);
+                // Check for 503 or specific error message
+                if (geminiError?.status === 503 || geminiError?.message?.includes('overloaded')) {
+                    return NextResponse.json({
+                        error: 'The AI model is currently overloaded. Please try again in a moment.'
+                    }, { status: 503 });
+                }
+                throw geminiError; // Re-throw other errors to be caught effectively by outer block
+            }
         }
 
-        // Update Project Mode status and Upsert Feature Data with Version Increment
+        // Upsert Feature Data
         await db.collection('project_features').updateOne(
             {
                 project_id: new ObjectId(projectId),
-                feature_key: 'vision'
+                feature_key: 'user_flow'
             },
             {
                 $set: {
                     project_id: new ObjectId(projectId),
-                    feature_key: 'vision',
+                    feature_key: 'user_flow',
                     user_input: {
-                        purpose,
-                        problem_statement
+                        description: user_input
                     },
                     generated_output: generatedContent,
                     updatedAt: new Date()
@@ -83,9 +103,9 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             { project_id: new ObjectId(projectId) },
             {
                 $set: {
-                    "features.vision.status": "COMPLETED",
-                    "features.vision.updatedAt": new Date(),
-                    "features.user_flow.status": "IN_PROGRESS", // Unlock next step
+                    "features.user_flow.status": "COMPLETED",
+                    "features.user_flow.updatedAt": new Date(),
+                    "features.tech_choices.status": "IN_PROGRESS" // Unlock next step
                 }
             }
         );
@@ -93,21 +113,20 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         // Fetch updated feature to get version
         const updatedFeature = await db.collection('project_features').findOne({
             project_id: new ObjectId(projectId),
-            feature_key: 'vision'
+            feature_key: 'user_flow'
         });
 
         return NextResponse.json({
-            message: 'Vision saved',
+            message: 'User Flow saved',
             data: {
-                purpose,
-                problem_statement,
+                user_input,
                 generated_output: generatedContent,
                 refactored_version: updatedFeature?.refactored_version
             }
         });
 
     } catch (error) {
-        console.error('Save Vision error:', error);
+        console.error('Save User Flow error:', error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
 }
@@ -134,15 +153,15 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
         const feature = await db.collection('project_features').findOne({
             project_id: new ObjectId(projectId),
-            feature_key: 'vision'
+            feature_key: 'user_flow'
         });
 
         return NextResponse.json({
-            data: feature ? { ...feature.user_input, generated_output: feature.generated_output } : { purpose: '', problem_statement: '' }
+            data: feature ? { ...feature.user_input, generated_output: feature.generated_output, refactored_version: feature.refactored_version } : { description: '' }
         });
 
     } catch (error) {
-        console.error('Get Vision error:', error);
+        console.error('Get User Flow error:', error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
 }

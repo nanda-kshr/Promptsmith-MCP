@@ -1,23 +1,15 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { verifyToken } from '@/app/lib/jwt';
+import { getAuthPayload } from '@/app/lib/authHelper';
 import { getDb } from '@/app/lib/mongo';
 import { ObjectId } from 'mongodb';
 
-async function getUser(request: Request) {
-    const cookieStore = await cookies();
-    const token = cookieStore.get('token')?.value;
-    if (!token) return null;
-
-    const payload = verifyToken(token);
-    if (!payload || typeof payload === 'string' || !payload.userId) return null;
-
-    return payload;
+async function getUser() {
+    return await getAuthPayload();
 }
 
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
     const params = await props.params;
-    const user = await getUser(request);
+    const user = await getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     if (!ObjectId.isValid(params.id)) {
@@ -44,7 +36,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
 export async function PUT(request: Request, props: { params: Promise<{ id: string }> }) {
     const params = await props.params;
-    const user = await getUser(request);
+    const user = await getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     if (!ObjectId.isValid(params.id)) {
@@ -78,7 +70,7 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
 
 export async function DELETE(request: Request, props: { params: Promise<{ id: string }> }) {
     const params = await props.params;
-    const user = await getUser(request);
+    const user = await getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     if (!ObjectId.isValid(params.id)) {

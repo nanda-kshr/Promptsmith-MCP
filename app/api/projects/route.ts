@@ -1,22 +1,14 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { verifyToken } from '@/app/lib/jwt';
+import { getAuthPayload } from '@/app/lib/authHelper';
 import { getDb } from '@/app/lib/mongo';
 import { ObjectId } from 'mongodb';
 
 export async function POST(request: Request) {
     try {
-        const cookieStore = await cookies();
-        const token = cookieStore.get('token')?.value;
+        const payload = await getAuthPayload();
 
-        if (!token) {
+        if (!payload) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const payload = verifyToken(token);
-
-        if (!payload || typeof payload === 'string' || !payload.userId) {
-            return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
         }
 
         const body = await request.json();
@@ -96,17 +88,10 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
     try {
-        const cookieStore = await cookies();
-        const token = cookieStore.get('token')?.value;
+        const payload = await getAuthPayload();
 
-        if (!token) {
+        if (!payload) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const payload = verifyToken(token);
-
-        if (!payload || typeof payload === 'string' || !payload.userId) {
-            return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
         }
 
         const url = new URL(request.url);

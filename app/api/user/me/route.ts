@@ -1,23 +1,16 @@
+
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { verifyToken } from '@/app/lib/jwt';
+import { getAuthPayload } from '@/app/lib/authHelper';
 import { getDb } from '@/app/lib/mongo';
 import { ObjectId } from 'mongodb';
-import { randomBytes } from 'crypto';
+import { cookies } from 'next/headers';
 
 export async function GET() {
     try {
-        const cookieStore = await cookies();
-        const token = cookieStore.get('token')?.value;
+        const payload = await getAuthPayload();
 
-        if (!token) {
+        if (!payload) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const payload = verifyToken(token);
-
-        if (!payload || typeof payload === 'string' || !payload.userId) {
-            return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
         }
 
         const db = await getDb();
@@ -30,23 +23,16 @@ export async function GET() {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
 
-        let appApiKey = user.appApiKey;
-
-        // Generate appApiKey if not exists
-        if (!appApiKey) {
-            const randomPart = randomBytes(24).toString('hex');
-            appApiKey = `ps_${randomPart}`;
-
-            await usersCollection.updateOne(
-                { _id: user._id },
-                { $set: { appApiKey } }
-            );
-        }
+        // Get the JWT from the cookie
+        const cookieStore = await cookies();
+        const token = cookieStore.get('token')?.value;
 
         return NextResponse.json({
             name: user.name,
             email: user.email,
-            appApiKey: appApiKey
+            // Return the actual JWT token for MCP usage
+            // Legacy 'appApiKey' is replaced by this
+            appApiKey: token || "Token Not Found"
         });
 
     } catch (error) {
