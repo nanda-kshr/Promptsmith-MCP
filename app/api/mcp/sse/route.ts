@@ -12,6 +12,14 @@ const corsHeaders = {
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
+declare global {
+    var mcpUserSessions: Map<string, string>;
+}
+
+if (!global.mcpUserSessions) {
+    global.mcpUserSessions = new Map();
+}
+
 export async function OPTIONS() {
     return new Response(null, { headers: corsHeaders });
 }
@@ -24,8 +32,22 @@ export async function POST(req: Request) {
     console.log(`[MCP SSE] POST request received`);
     try {
         const url = new URL(req.url);
-        const sessionId = url.searchParams.get("sessionId");
-        console.log(`[MCP SSE] sessionId: ${sessionId}`);
+        const headersList = await headers();
+        const authHeader = headersList.get("authorization");
+        const tokenToken = url.searchParams.get("token");
+
+        const token = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : tokenToken;
+
+        let sessionId = url.searchParams.get("sessionId");
+        console.log(`[MCP SSE] sessionId from URL: ${sessionId}`);
+
+        if (!sessionId && token) {
+            const decoded = verifyToken(token) as any;
+            if (decoded?.userId) {
+                sessionId = global.mcpUserSessions.get(decoded.userId) || null;
+                console.log(`[MCP SSE] Fallback: Found sessionId ${sessionId} for userId ${decoded.userId}`);
+            }
+        }
 
         if (!sessionId) {
             console.warn(`[MCP SSE] Missing sessionId in POST. Full URL: ${req.url}`);
@@ -112,6 +134,7 @@ export async function GET(req: Request) {
         const transport = new SSEServerTransport("/api/mcp/sse", mockRes);
 
         global.mcpTransports.set(transport.sessionId, transport);
+        global.mcpUserSessions.set(decoded.userId, transport.sessionId);
 
         await server.connect(transport);
 
