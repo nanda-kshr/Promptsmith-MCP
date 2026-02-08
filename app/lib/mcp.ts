@@ -104,7 +104,7 @@ export const createMcpServer = (userId: string) => {
         {
             projectId: z.string().describe("The ID of the project to fetch tasks for."),
             limit: z.number().optional().default(10).describe("Max number of tasks to return."),
-            reset: z.boolean().optional().default(false).describe("If true, resets ALL coding tasks to PENDING before fetching. Use this to restart the project build.")
+            reset: z.boolean().optional().default(false).describe("If true, resets ALL coding tasks to PENDING before fetching. Use this to restart the project build or If this is the first request to get pending tasks.")
         },
         async ({ projectId, limit, reset }) => {
             const db = await getDb();
@@ -140,6 +140,15 @@ export const createMcpServer = (userId: string) => {
                 .toArray();
 
             if (tasks.length === 0) {
+                // Check if ANY tasks exist for this project (to distinguish between completed and not-generated)
+                const totalTasks = await db.collection('generated_prompts').countDocuments({
+                    project_id: new ObjectId(projectId)
+                });
+
+                if (totalTasks === 0) {
+                    return { content: [{ type: "text", text: "No generated tasks found. Please ensure you have run the **Prompt Factory** generation stages in the PromptSmith Dashboard for this project." }] };
+                }
+
                 return { content: [{ type: "text", text: "All tasks completed! Now run the project and verify if everything works as expected." }] };
             }
 
@@ -148,7 +157,8 @@ export const createMcpServer = (userId: string) => {
 
             let message = `### NEXT ACTION (Sequence: ${currentTask.sequence})\n\n`;
             message += `**Title**: ${currentTask.title}\n\n`;
-            message += `**Instructions**:\n1. Read the prompt content from: \`prompt://${currentTask._id}\`\n`;
+            message += `**Task Content**:\n\`\`\`text\n${currentTask.prompt_text}\n\`\`\`\n\n`;
+            message += `**Instructions**:\n1. Execute the task content above.\n`;
             message += `2. Execute the task.\n`;
             message += `3. IMPORTANT: When finished, call tool \`mark_task_complete(promptId: "${currentTask._id}", projectId: "${projectId}")\`.\n`;
 
