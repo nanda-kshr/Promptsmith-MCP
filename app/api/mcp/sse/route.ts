@@ -153,6 +153,12 @@ export async function GET(req: Request) {
 
         await server.connect(transport);
 
+        // MANUAL ENDPOINT SEND: Ensure the client receives the endpoint event immediately
+        // The SDK's SSEServerTransport tries to do this, but in Next.js App Router streaming,
+        // explicit writing ensures it flushes correctly.
+        const endpointMessage = `/api/mcp/sse?sessionId=${transport.sessionId}`;
+        writer.write(new TextEncoder().encode(`event: endpoint\ndata: ${endpointMessage}\n\n`));
+
         return new Response(stream.readable, {
             headers: {
                 ...corsHeaders,
