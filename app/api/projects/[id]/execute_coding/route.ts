@@ -30,7 +30,7 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
             };
 
             // IF FINAL STAGE, MARK FEATURE AS COMPLETE
-            if (stage === 'execute_coding.stage3') {
+            if (stage === 'execute_coding.stage7') {
                 updateDoc.generated_output = "COMPLETED";
                 // Update Project Modes
                 await db.collection('project_modes').updateOne(
@@ -63,7 +63,11 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
                     execute_coding_check: "IN_PROGRESS",
                     execute_coding_stage1: "IN_PROGRESS",
                     execute_coding_stage2: "IN_PROGRESS",
-                    execute_coding_stage3: "IN_PROGRESS"
+                    execute_coding_stage3: "IN_PROGRESS",
+                    execute_coding_stage4: "IN_PROGRESS",
+                    execute_coding_stage5: "IN_PROGRESS",
+                    execute_coding_stage6: "IN_PROGRESS",
+                    execute_coding_stage7: "IN_PROGRESS"
                 }
             };
 
@@ -169,7 +173,11 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             'execute_coding.check': 0,
             'execute_coding.stage1': 10,
             'execute_coding.stage2': 20,
-            'execute_coding.stage3': 30, // Batch will have many files, so we use a larger gap if needed, but 10 is fine if we use idx
+            'execute_coding.stage3': 30,
+            'execute_coding.stage4': 40,
+            'execute_coding.stage5': 50,
+            'execute_coding.stage6': 60,
+            'execute_coding.stage7': 70,
         };
 
         // --- SUB-GENERATOR MAPPING ---
@@ -179,7 +187,11 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             'execute_coding.stage1': ['execute_coding.stage1.env'],
             'execute_coding.stage2': ['execute_coding.stage2.structure'],
             'execute_coding.stage3': ['execute_coding.stage3.batch'],
-            // Removed Stages 4-7
+            'execute_coding.stage4': ['execute_coding.stage4.api_docs'],
+            'execute_coding.stage5': ['execute_coding.stage5.structure'],
+            'execute_coding.stage6': ['execute_coding.stage6.batch'],
+            'execute_coding.stage7': ['execute_coding.stage7'],
+            // Stage 8 removed
         };
 
         // 1. Fetch Full Context
@@ -249,36 +261,40 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         // 3. EXECUTION LOGIC
         let pagination: any = null;
 
-        if (stage === 'execute_coding.stage3') {
+        if (stage === 'execute_coding.stage3' || stage === 'execute_coding.stage6') {
             const offset = body.offset || 0;
             const limit = body.limit || 5;
 
-            // --- STAGE 3 SPECIAL: BATCH PROCESSING ---
-            const promptConfig = await db.collection('feature_prompts').findOne({ feature_key: 'execute_coding.stage3.batch' });
-            if (!promptConfig) throw new Error("Stage 3 Batch Prompt not found");
+            // --- STAGE 3 & 6 SPECIAL: BATCH PROCESSING ---
+            const isFrontend = stage === 'execute_coding.stage6';
+            const promptKey = isFrontend ? 'execute_coding.stage6.batch' : 'execute_coding.stage3.batch';
+            const structureStage = isFrontend ? 'execute_coding.stage5' : 'execute_coding.stage2';
 
-            // A. Get Input from Stage 2 (Tree)
-            const stage2Prompt = await db.collection('generated_prompts').findOne({
+            const promptConfig = await db.collection('feature_prompts').findOne({ feature_key: promptKey });
+            if (!promptConfig) throw new Error(`${stage} Batch Prompt not found`);
+
+            // A. Get Input from Structure Stage (2 or 5)
+            const structurePrompt = await db.collection('generated_prompts').findOne({
                 project_id: new ObjectId(projectId),
-                stage: 'execute_coding.stage2',
+                stage: structureStage,
                 type: "CODING"
             });
 
-            if (!stage2Prompt) throw new Error("Stage 2 Skeleton not found. Please run Stage 2 first.");
+            if (!structurePrompt) throw new Error(`${structureStage} Structure not found. Please run it first.`);
 
             // Parse Tree
-            const stage1Text = stage2Prompt.prompt_text;
-            const jsonStart = stage1Text.indexOf('{');
-            const jsonEnd = stage1Text.lastIndexOf('}');
+            const stageText = structurePrompt.prompt_text;
+            const jsonStart = stageText.indexOf('{');
+            const jsonEnd = stageText.lastIndexOf('}');
 
             let structureJson: any = { tree: [] };
             if (jsonStart !== -1 && jsonEnd !== -1) {
                 try {
-                    const jsonStr = stage1Text.substring(jsonStart, jsonEnd + 1);
+                    const jsonStr = stageText.substring(jsonStart, jsonEnd + 1);
                     structureJson = JSON.parse(jsonStr);
                 } catch (e) {
-                    console.error("Failed to parse Stage 2 JSON:", e);
-                    throw new Error("Invalid Stage 2 Output. Please regenerate Stage 2.");
+                    console.error(`Failed to parse ${structureStage} JSON:`, e);
+                    throw new Error(`Invalid ${structureStage} Output. Please regenerate.`);
                 }
             }
 
@@ -298,7 +314,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             const filesToProcess = sortedFiles.slice(offset, offset + limit);
             const isComplete = (offset + limit) >= totalFiles;
 
-            console.log(`[Stage 3] Processing Batch: ${offset} - ${offset + limit} (Total: ${totalFiles})`);
+            console.log(`[${stage}] Processing Batch: ${offset} - ${offset + limit} (Total: ${totalFiles})`);
 
             pagination = {
                 offset,
@@ -312,7 +328,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             const generateBatch = async (files: any[]): Promise<any[]> => {
                 if (files.length === 0) return [];
 
-                console.log(`[Stage 3] Generating batch of ${files.length} files: ${files.map((f: any) => f.path || f.name).join(', ')}`);
+                console.log(`[${stage}] Generating batch of ${files.length} files: ${files.map((f: any) => f.path || f.name).join(', ')}`);
 
                 // Prepare Input
                 const fileInputs = files.map(f => ({
@@ -346,12 +362,12 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
                     if (!parsed || !parsed.prompts) throw new Error("Failed to parse");
 
-                    console.log(`[Stage 3] Batch Output Prompts: ${parsed.prompts.length}. Titles: ${parsed.prompts.map((p: any) => p.title).join(', ')}`);
+                    console.log(`[${stage}] Batch Output Prompts: ${parsed.prompts.length}. Titles: ${parsed.prompts.map((p: any) => p.title).join(', ')}`);
 
                     return parsed.prompts || [];
 
                 } catch (error: any) {
-                    console.error("[Stage 3] Batch Error", error);
+                    console.error(`[${stage}] Batch Error`, error);
                     return []; // Fail gracefully for this batch
                 }
             };
@@ -431,7 +447,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
                     }
 
                     if (parsed) {
-                        if (generatorKey === 'execute_coding.stage2') {
+                        if (generatorKey === 'execute_coding.stage2' || generatorKey === 'execute_coding.stage5') {
                             console.log("[Stage 2 Debug] Parsed JSON:\n", JSON.stringify(parsed, null, 2));
                         }
 
@@ -524,8 +540,9 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
         if (formattedPrompts.length > 0) {
             // Cleanup previous prompts for this stage to ensure idempotency
-            // For Stage 3 (Batching), ONLY clear on the first batch (offset 0)
-            const shouldClear = stage !== 'execute_coding.stage3' || (body.offset === 0 || !body.offset);
+            // For Stage 3 & 6 (Batching), ONLY clear on the first batch (offset 0)
+            const isBatchStage = stage === 'execute_coding.stage3' || stage === 'execute_coding.stage6';
+            const shouldClear = !isBatchStage || (body.offset === 0 || !body.offset);
 
             if (shouldClear) {
                 await db.collection('generated_prompts').deleteMany({
@@ -540,7 +557,8 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         }
 
         // Save Summary/Status for this stage
-        const isFinalBatch = stage !== 'execute_coding.stage3' || (pagination && pagination.isComplete);
+        const isBatchStage = stage === 'execute_coding.stage3' || stage === 'execute_coding.stage6';
+        const isFinalBatch = !isBatchStage || (pagination && pagination.isComplete);
 
         const updateDoc: any = {
             [`stage_status.${stage.replace('.', '_')}`]: isFinalBatch ? "COMPLETED" : "IN_PROGRESS",
@@ -548,7 +566,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         };
 
         // IF FINAL STAGE, MARK FEATURE AS COMPLETE
-        if (stage === 'execute_coding.stage3' && isFinalBatch) {
+        if (stage === 'execute_coding.stage7') {
             updateDoc.generated_output = "COMPLETED"; // Flag for Dashboard Green Tick
 
             // Update Project Modes Status

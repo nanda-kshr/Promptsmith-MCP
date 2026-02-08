@@ -103,9 +103,10 @@ export const createMcpServer = (userId: string) => {
         "Fetch a list of pending coding tasks for a specific project.",
         {
             projectId: z.string().describe("The ID of the project to fetch tasks for."),
-            limit: z.number().optional().default(10).describe("Max number of tasks to return.")
+            limit: z.number().optional().default(10).describe("Max number of tasks to return."),
+            reset: z.boolean().optional().default(false).describe("If true, resets ALL coding tasks to PENDING before fetching. Use this to restart the project build.")
         },
-        async ({ projectId, limit }) => {
+        async ({ projectId, limit, reset }) => {
             const db = await getDb();
             if (!ObjectId.isValid(projectId)) {
                 return { content: [{ type: "text", text: "Invalid Project ID" }], isError: true };
@@ -119,6 +120,14 @@ export const createMcpServer = (userId: string) => {
 
             if (!project) {
                 return { content: [{ type: "text", text: "Project not found or unauthorized access." }], isError: true };
+            }
+
+            // OPTIONAL: Reset all tasks if requested
+            if (reset) {
+                await db.collection('generated_prompts').updateMany(
+                    { project_id: new ObjectId(projectId), status: { $ne: 'PENDING' } },
+                    { $set: { status: 'PENDING', updatedAt: new Date() } }
+                );
             }
 
             const tasks = await db.collection('generated_prompts')

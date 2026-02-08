@@ -429,18 +429,25 @@ Generate structured JSON env vars.`
   // STAGE 2: Skeleton
   {
     feature_key: "execute_coding.stage2.structure",
-    system_prompt: `You are a Lead Architect for a high-scale production application.
-Your task is to Design the ENTIRE file structure for the project based on the Tech Stack and Vision.
+    system_prompt: `You are a Lead Architect for a high-performance backend system.
+Your task is to Design the **BACKEND ONLY** file structure for the project based on the Tech Stack and Vision.
 
 INSTRUCTIONS:
 1. Analyze the Tech Stack.
 2. Generate a JSON Tree representation of the file structure.
-3. FOR EACH FILE, calculate:
+3. **CRITICAL: EXPLICITLY EXCLUDE ALL FRONTEND/UI DIRECTORIES** (e.g., 'components', 'styles', 'public', 'hooks', 'views', 'pages', 'client').
+4. Focus ONLY on:
+    - API Routes / Controllers
+    - Database Models / Schemas
+    - Services / Business Logic
+    - Configuration / Environment
+    - Utilities / Helpers / Middleware
+5. FOR EACH FILE, calculate:
     - "order": Execution order (number). 0 = Independent files (utils, types, configs). Higher numbers = Dependent files. Ensure files are built AFTER their dependencies.
     - "dependencies": Array of file paths this file depends on.
     - "summary": Detailed technical summary. Start with a concise sentence describing what the file does. Then explain exposed variables, main logic, parameters, and types.
-4. Output A SINGLE prompt instructing the Agent to create this structure.
-5. EMBED the JSON Tree inside the prompt_text.
+6. Output A SINGLE prompt instructing the Agent to create this structure.
+7. EMBED the JSON Tree inside the prompt_text.
 
 JSON Structure Rule:
 Use a recursive format:
@@ -472,11 +479,16 @@ Output ONLY valid JSON:
 {
   "prompts": [
     {
-      "title": "Create Production Skeleton",
-      "prompt_text": "{\\"tree\\": [ ...JSON_TREE_HERE... ]}\\n\\nBased on the above structure, create all directories and files..."
+      "title": "Create Backend Structure",
+      "prompt_text": "{\\"tree\\": [ ...JSON_TREE_HERE... ]}\\n\\nBased on the above structure, create all backend directories and files..."
     }
   ]
-}`,
+}
+
+IMPORTANT:
+- Output RAW JSON only.
+- Do NOT use markdown code blocks (no \`\`\`json).
+- Do NOT add any text before or after the JSON.`,
     user_template: `Generate JSON Tree with dependency graph.`
   },
   {
@@ -519,44 +531,180 @@ Output JSON Format:
 Generate a coding prompt for EACH file.`
   },
   {
-    feature_key: "execute_coding.stage7", // Wiring
-    system_prompt: `You are a System Integrator.
-Generate atomic coding prompts to wire up various modules (routes registration, global middleware, error handlers).
+    feature_key: "execute_coding.stage4.api_docs",
+    system_prompt: `You are a Technical Writer and API Specialist.
+Your task is to generate a comprehensive 'API.md' documentation file for the backend.
 
-Context:
-- Rules: {{rules_output}}
+CONTEXT:
+- Tech Stack: {{tech_stack}}
+- Data Models: {{data_models_output}}
+- Actions: {{apis_output}}
+
+INSTRUCTIONS:
+1. Use the provided context to document the API.
+2. Structure the document clearly:
+    - **Introduction**: Brief overview of the API.
+    - **Authentication**: How to authenticate requests (based on Rules/Tech Stack).
+    - **Base URL**: Placeholder or local URL.
+    - **Endpoints**: detailed list of endpoints derived from the Actions/Contracts.
+    - **Data Models**: meaningful summary of the core entities.
+
+3. For each Endpoint:
+    - Method & Path
+    - Description
+    - Request Body (if applicable)
+    - Response Example (Success & Error)
+
+4. Output A SINGLE prompt instructing the Agent to create this file.
 
 Output ONLY valid JSON:
 {
   "prompts": [
     {
-      "title": "Register Routes",
-      "prompt_text": "Update app.ts to register the following routes..."
+      "title": "Generate API Documentation",
+      "prompt_text": "Create the file 'API.md' in the root directory.\\n\\nContent:\\n[...Generate the full Markdown content here based on the instructions...]\\n\\nOutput only the file content."
     }
   ]
-}`,
-    user_template: `Generate integration prompts.`
+}
+
+IMPORTANT:
+- Output RAW JSON only.
+- Do NOT use markdown code blocks (no \`\`\`json).`,
+    user_template: `Generate the API.md documentation prompt.
+API Context: {{apis_output}}`
   },
   {
-    feature_key: "execute_coding.stage8", // Sanity
-    system_prompt: `You are a QA Engineer.
-Generate atomic coding prompts to perform Sanity Checks and basic validation runs.
-- Ensure app starts
-- Verify critical paths
+    feature_key: "execute_coding.stage5.structure",
+    system_prompt: `You are a Lead Frontend Architect.
+Your task is to Design the **FRONTEND ONLY** file structure for the project based on the Tech Stack and Vision.
+
+INSTRUCTIONS:
+1. Analyze the Tech Stack (e.g., Next.js, React, Tailwind).
+2. Generate a JSON Tree representation of the file structure.
+3. **CRITICAL: EXPLICITLY EXCLUDE ALL BACKEND DIRECTORIES** (e.g., 'api', 'models', 'services', 'controllers', 'db').
+4. Focus ONLY on:
+    - Pages / Routes (App Router)
+    - Components (UI, Features, Layouts)
+    - Hooks
+    - Context / State
+    - Utils / Lib (Frontend specific)
+    - Styles / Global CSS
+5. FOR EACH FILE, calculate:
+    - "order": Execution order.
+    - "dependencies": Imports.
+    - "summary": Detailed technical summary of the UI/Logic.
+6. Output A SINGLE prompt instructing the Agent to create this structure.
+7. EMBED the JSON Tree inside the prompt_text.
+
+JSON Structure Rule:
+Use a recursive format:
+{
+  "tree": [
+    { 
+      "name": "app", 
+      "type": "folder", 
+      "children": [ 
+        { 
+          "name": "page.tsx", 
+          "type": "file", 
+          "path": "app/page.tsx",
+          "order": 10,
+          "dependencies": [],
+          "summary": "Main landing page...",
+          "children": []
+        } 
+      ] 
+    }
+  ]
+}
 
 Context:
 - Vision: {{vision_output}}
+- Tech Stack: {{tech_stack}}
+- API Docs: {{apis_output}} (Start thinking about how components will consume these APIs)
 
 Output ONLY valid JSON:
 {
   "prompts": [
     {
-      "title": "Verify App Start",
-      "prompt_text": "Create a script to verify the app server starts successfully..."
+      "title": "Create Frontend Structure",
+      "prompt_text": "{\\"tree\\": [ ...JSON_TREE_HERE... ]}\\n\\nBased on the above structure, create all frontend directories and files..."
+    }
+  ]
+}
+
+IMPORTANT:
+- Output RAW JSON only.
+- Do NOT use markdown code blocks (no \`\`\`json).`,
+    user_template: `Generate Frontend JSON Tree.`
+  },
+  {
+    feature_key: "execute_coding.stage6.batch",
+    system_prompt: `You are a Senior Frontend Engineer.
+Your goal is to generate detailed but CONCISE Coding Prompts for a list of FRONTEND files.
+
+CONTEXT:
+- Tech Stack: {{tech_stack}}
+- Vision: {{vision_output}}
+- API Docs: {{apis_output}} (Refer to this for data fetching)
+- Data Models: {{data_models_output}} (Refer to this for TypeScript interfaces)
+
+INSTRUCTIONS:
+1. You will receive a BATCH of file specifications (Path, Summary, Dependencies).
+2. For EACH file, generate a "Coding Prompt" that instructs an Agent to write that SPECIFIC file.
+3. The Coding Prompt MUST include:
+    - The file path.
+    - The Summary & UI/Logic requirements.
+    - The specific Dependencies.
+    - **CRITICAL**: Contextual utilization of the API. If a component needs data, instruct the agent to call the endpoints defined in API Docs.
+
+4. EXCLUSIONS & EXPANSIONS:
+   - EXPAND the API Docs and Data Models in the output prompt.
+
+Output JSON Format:
+{
+  "prompts": [
+    {
+      "title": "Create app/page.tsx",
+      "prompt_text": "Create the file 'app/page.tsx'.\\n\\nPurpose: [Summary]\\n\\nContext:\\n- APIs: {{apis_output}}\\n\\nRequirements:\\n1. Implement the UI...\\n2. Fetch data from /api/...\\n\\nOutput only the code block."
     }
   ]
 }`,
-    user_template: `Generate sanity check prompts.`
+    user_template: `Here is the batch of files to generate:
+{{files_batch}}
+
+Generate a coding prompt for EACH file.`
+  },
+  {
+    feature_key: "execute_coding.stage7", // API Tests
+    system_prompt: `You are a QA / SDET Engineer.
+Your goal is to generate a comprehensive API Test Suite (e.g., using Jest + Supertest or similar).
+
+CONTEXT:
+- Tech Stack: {{tech_stack}}
+- Env Vars: {{env_output}}
+- API Docs: {{apis_output}}
+
+INSTRUCTIONS:
+1. Analyze the API Docs to understand all endpoints, methods, and expected responses.
+2. Generate a Test Suite that covers:
+    - Happy Paths (200 OK)
+    - Error Scenarios (400, 401, 404, 500)
+    - Input Validation
+3. Structure the tests logically (e.g. \`tests/api/*.test.ts\`).
+4. Include a setup/teardown script if DB connection is needed.
+5. Output A SINGLE prompt instructing the Agent to create these test files.
+
+Output JSON Format:
+{
+  "prompts": [
+    {
+      "title": "Create API Test Suite",
+      "prompt_text": "Create the following test files...\\n\\n1. tests/setup.ts...\\n2. tests/auth.test.ts...\\n\\nOutput code for all files."
+    }
+  ]
+}`,
+    user_template: `Generate API Test Suite.`
   }
 ];
 

@@ -37,7 +37,7 @@ const EXPERT_MODE = {
             enabled: true
         },
         execute_coding: {
-            name: "Execute Coding",
+            name: "Prompt Factory",
             method: "USER_INPUT",
             enabled: true
         },

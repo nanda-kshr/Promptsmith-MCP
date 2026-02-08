@@ -16,6 +16,10 @@ const STAGES = [
     { key: 'execute_coding.stage1', label: '1. Environment', description: 'Setup .env and config' },
     { key: 'execute_coding.stage2', label: '2. Skeleton', description: 'Create folders and files' },
     { key: 'execute_coding.stage3', label: '3. Core Setup', description: 'Bootstrap entry points' },
+    { key: 'execute_coding.stage4', label: '4. API Docs', description: 'Generate API.md' },
+    { key: 'execute_coding.stage5', label: '5. Frontend Skeleton', description: 'Create frontend folders' },
+    { key: 'execute_coding.stage6', label: '6. Frontend Code', description: 'Generate frontend files' },
+    { key: 'execute_coding.stage7', label: '7. API Tests', description: 'Generate Test Suite' },
 ];
 
 export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodingTabProps) {
@@ -74,7 +78,7 @@ export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodi
         setPrompts(prev => prev.filter(p => p.stage !== stageKey));
 
         try {
-            if (stageKey === 'execute_coding.stage3') {
+            if (stageKey === 'execute_coding.stage3' || stageKey === 'execute_coding.stage6') {
                 // --- BATCH MODE ---
                 let offset = 0;
                 let isComplete = false;
@@ -363,8 +367,8 @@ export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodi
                                     }
                                 }}
                             />
-                        ) : currentStageIndex === 2 && prompts.length > 0 ? (
-                            /* STAGE 2 SPECIAL UI: FILE TREE with TOGGLE */
+                        ) : (currentStageIndex === 2 || currentStageIndex === 5) && prompts.length > 0 ? (
+                            /* STAGE 2 & 5 SPECIAL UI: FILE TREE with TOGGLE */
                             <div className="space-y-4">
                                 <div className="flex justify-end gap-2">
                                     <button
@@ -381,10 +385,10 @@ export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodi
                                     </button>
                                 </div>
                                 {viewMode === 'tree' ? (
-                                    <FileTreeViewer promptText={prompts.find(p => p.stage === STAGES[2].key)?.prompt_text || ""} />
+                                    <FileTreeViewer promptText={prompts.find(p => p.stage === STAGES[currentStageIndex].key)?.prompt_text || ""} />
                                 ) : (
                                     <EditablePromptCard
-                                        prompt={prompts.find(p => p.stage === STAGES[2].key)}
+                                        prompt={prompts.find(p => p.stage === STAGES[currentStageIndex].key)}
                                         onSave={handleGenericSave}
                                     />
                                 )}
