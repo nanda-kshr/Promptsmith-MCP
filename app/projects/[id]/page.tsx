@@ -8,6 +8,7 @@ import LogoutButton from '../../components/LogoutButton';
 import VisionTab from '@/app/components/features/VisionTab';
 import UserFlowTab from '@/app/components/features/UserFlowTab';
 import TechChoicesTab from '@/app/components/features/TechChoicesTab';
+import MediaTab from '@/app/components/features/MediaTab';
 import RulesTab from '@/app/components/features/RulesTab';
 import DataModelsTab from '@/app/components/features/DataModelsTab';
 import ApisTab from '@/app/components/features/ApisTab';
@@ -57,6 +58,11 @@ async function getProject(id: string) {
         feature_key: 'tech_choices'
     });
 
+    const mediaFeature = await db.collection('project_features').findOne({
+        project_id: project._id,
+        feature_key: 'media'
+    });
+
     const rulesFeature = await db.collection('project_features').findOne({
         project_id: project._id,
         feature_key: 'rules'
@@ -90,11 +96,16 @@ async function getProject(id: string) {
             user_notes: techChoicesFeature.user_input?.user_notes,
             generated_output: techChoicesFeature.generated_output
         } : undefined,
+        mediaData: mediaFeature ? {
+            generated_output: mediaFeature.generated_output,
+            user_custom_input: mediaFeature.user_input?.user_custom_input
+        } : undefined,
         rulesData: rulesFeature ? {
             generated_output: rulesFeature.generated_output,
             current_rules: rulesFeature.user_input?.current_rules,
             ignored_rules: rulesFeature.user_input?.ignored_rules,
-            user_custom_input: rulesFeature.user_input?.user_custom_input
+            user_custom_input: rulesFeature.user_input?.user_custom_input,
+            media_generated_output: mediaFeature?.generated_output
         } : undefined,
         dataModelsData: dataModelsFeature ? {
             generated_output: dataModelsFeature.generated_output,
@@ -116,21 +127,45 @@ export default async function ProjectDetailsPage(props: { params: Promise<{ id: 
         notFound();
     }
 
-    const { project, mode, projectMode, visionData, userFlowData, techChoicesData, rulesData, dataModelsData, apisData } = data;
+    const { project, mode, projectMode, visionData, userFlowData, techChoicesData, mediaData, rulesData, dataModelsData, apisData } = data;
 
     // Default to first feature or 'vision'
     const activeTab = searchParams.tab || 'vision';
 
-    // Combine static mode features with dynamic project mode status
-    const features = mode?.features ? Object.entries(mode.features).map(([key, staticFeature]: [string, any]) => {
-        const dynamicStatus = projectMode?.features?.[key]?.status || 'PENDING';
-        return {
-            key,
-            name: staticFeature.name,
-            enabled: staticFeature.enabled,
-            status: dynamicStatus
-        };
-    }) : [];
+    // Combine static mode features with dynamic project mode status.
+    // For EXPERT mode, enforce a canonical feature order and ensure 'media' exists
+    // even for older mode documents that don't have it yet.
+    const rawFeatures = mode?.features || {};
+    const isExpertMode = mode?.name === 'EXPERT';
+
+    const orderedKeys = isExpertMode
+        ? ['vision', 'user_flow', 'tech_choices', 'media', 'rules', 'data_models', 'apis', 'execute_coding', 'refactor']
+        : Object.keys(rawFeatures);
+
+    const features = orderedKeys
+        .map((key) => {
+            let staticFeature: any = (rawFeatures as any)[key];
+
+            // Backfill Media definition if missing in older EXPERT mode docs
+            if (!staticFeature && isExpertMode && key === 'media') {
+                staticFeature = {
+                    name: 'Media',
+                    method: 'USER_INPUT',
+                    enabled: true
+                };
+            }
+
+            if (!staticFeature) return null;
+
+            const dynamicStatus = projectMode?.features?.[key]?.status || 'PENDING';
+            return {
+                key,
+                name: staticFeature.name,
+                enabled: staticFeature.enabled,
+                status: dynamicStatus
+            };
+        })
+        .filter(Boolean) as { key: string; name: string; enabled: boolean; status: string }[];
 
     const activeFeatureIndex = features.findIndex(f => f.key === activeTab);
     const nextFeature = features[activeFeatureIndex + 1];
@@ -206,6 +241,9 @@ export default async function ProjectDetailsPage(props: { params: Promise<{ id: 
                             {activeTab === 'tech_choices' && (
                                 <TechChoicesTab projectId={project._id.toString()} initialData={techChoicesData} />
                             )}
+                            {activeTab === 'media' && (
+                                <MediaTab projectId={project._id.toString()} initialData={mediaData} />
+                            )}
                             {activeTab === 'rules' && (
                                 <RulesTab projectId={project._id.toString()} initialData={rulesData} />
                             )}
@@ -218,7 +256,7 @@ export default async function ProjectDetailsPage(props: { params: Promise<{ id: 
                             {activeTab === 'execute_coding' && (
                                 <ExecuteCodingTab projectId={project._id.toString()} initialData={{}} /> // Todo: pass real data
                             )}
-                            {activeTab !== 'vision' && activeTab !== 'user_flow' && activeTab !== 'tech_choices' && activeTab !== 'rules' && activeTab !== 'data_models' && activeTab !== 'apis' && activeTab !== 'execute_coding' && (
+                            {activeTab !== 'vision' && activeTab !== 'user_flow' && activeTab !== 'tech_choices' && activeTab !== 'media' && activeTab !== 'rules' && activeTab !== 'data_models' && activeTab !== 'apis' && activeTab !== 'execute_coding' && (
                                 <div className="flex flex-col items-center justify-center h-[400px] text-center space-y-4">
                                     <div className="p-4 bg-neutral-800 rounded-full">
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 text-neutral-400">

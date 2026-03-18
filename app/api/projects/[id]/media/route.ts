@@ -3,7 +3,6 @@ import { getAuthPayload } from '@/app/lib/authHelper';
 import { getDb } from '@/app/lib/mongo';
 import { ObjectId } from 'mongodb';
 
-// Helper to validate user and return payload
 async function getUser() {
     return await getAuthPayload();
 }
@@ -20,11 +19,10 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         }
 
         const body = await request.json();
-        const { current_rules, ignored_rules, user_custom_input, save_only } = body;
+        const { current_media, user_custom_input, save_only } = body;
 
         const db = await getDb();
 
-        // Ensure project belongs to user
         const project = await db.collection('projects').findOne({
             _id: new ObjectId(projectId),
             createdBy: new ObjectId(payload.userId)
@@ -32,15 +30,17 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
         if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
 
-        // Fetch Context (Vision, User Flows, Tech Choices)
+        // Fetch Context from previous steps
         const projectFeatures = await db.collection('project_features').find({
             project_id: new ObjectId(projectId),
-            feature_key: { $in: ['vision', 'user_flow', 'tech_choices'] }
+            feature_key: { $in: ['vision', 'user_flow', 'tech_choices', 'rules', 'data_models'] }
         }).toArray();
 
         const visionFeature = projectFeatures.find(f => f.feature_key === 'vision');
         const userFlowFeature = projectFeatures.find(f => f.feature_key === 'user_flow');
         const techChoicesFeature = projectFeatures.find(f => f.feature_key === 'tech_choices');
+        const rulesFeature = projectFeatures.find(f => f.feature_key === 'rules');
+        const dataModelsFeature = projectFeatures.find(f => f.feature_key === 'data_models');
 
         const visionContext = visionFeature?.generated_output || '';
         const userFlowContext = userFlowFeature?.generated_output || '';
@@ -51,38 +51,34 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             if (techChoicesFeature.user_input.user_notes) {
                 techStackContext += `\n\nAdditional Tech Notes: ${techChoicesFeature.user_input.user_notes}`;
             }
+        } else if (techChoicesFeature?.generated_output) {
+            techStackContext = techChoicesFeature.generated_output;
         }
 
-        // Fetch Prompt Config
-        const promptConfig = await db.collection('feature_prompts').findOne({ feature_key: 'rules' });
+        const rulesContext = rulesFeature?.generated_output || '';
+        const dataModelsContext = dataModelsFeature?.generated_output || '';
 
-        let generatedContent = null;
+        // Fetch Prompt Config
+        const promptConfig = await db.collection('feature_prompts').findOne({ feature_key: 'media' });
+
+        let generatedContent: string | null = null;
         if (save_only === true) {
-            generatedContent = JSON.stringify({
-                rules: current_rules || {
-                    data_rules: [],
-                    access_rules: [],
-                    behavior_rules: [],
-                    system_constraints: []
-                }
-            }, null, 2);
+            generatedContent = JSON.stringify({ images: current_media || [] }, null, 2);
         } else if (promptConfig) {
             const systemPrompt = promptConfig.system_prompt;
             let userPrompt = promptConfig.user_template;
 
-            // Prepare Existing & Ignored Rules Context
-            const existingRulesStr = current_rules ? JSON.stringify(current_rules, null, 2) : "None";
-            const ignoredRulesStr = ignored_rules ? JSON.stringify(ignored_rules, null, 2) : "None";
+            const existingMediaStr = current_media ? JSON.stringify(current_media, null, 2) : 'None';
 
-            // Replace Variables
-            userPrompt = userPrompt.replace('{{vision_output}}', visionContext)
+            userPrompt = userPrompt
+                .replace('{{vision_output}}', visionContext)
                 .replace('{{user_flow_output}}', userFlowContext)
                 .replace('{{tech_choices_output}}', techStackContext)
-                .replace('{{existing_rules}}', existingRulesStr)
-                .replace('{{ignored_rules}}', ignoredRulesStr)
+                .replace('{{rules_output}}', rulesContext)
+                .replace('{{data_models_output}}', dataModelsContext)
+                .replace('{{existing_media}}', existingMediaStr)
                 .replace('{{user_custom_input}}', user_custom_input || 'None');
 
-            // Generate with Gemini
             try {
                 const { GeminiManager } = await import('@/app/lib/gemini');
                 generatedContent = await GeminiManager.generateContent(
@@ -101,19 +97,17 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             }
         }
 
-        // Upsert Feature Data
         await db.collection('project_features').updateOne(
             {
                 project_id: new ObjectId(projectId),
-                feature_key: 'rules'
+                feature_key: 'media'
             },
             {
                 $set: {
                     project_id: new ObjectId(projectId),
-                    feature_key: 'rules',
+                    feature_key: 'media',
                     user_input: {
-                        current_rules,
-                        ignored_rules,
+                        current_media,
                         user_custom_input
                     },
                     generated_output: generatedContent,
@@ -127,26 +121,25 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             { upsert: true }
         );
 
-        // Update Project Mode status
+        // Mark Media as completed and unlock Rules
         await db.collection('project_modes').updateOne(
             { project_id: new ObjectId(projectId) },
             {
                 $set: {
-                    "features.rules.status": "COMPLETED",
-                    "features.rules.updatedAt": new Date(),
-                    "features.data_models.status": "IN_PROGRESS" // Unlock next step
+                    'features.media.status': 'COMPLETED',
+                    'features.media.updatedAt': new Date(),
+                    'features.rules.status': 'IN_PROGRESS'
                 }
             }
         );
 
-        // Fetch updated feature to get version
         const updatedFeature = await db.collection('project_features').findOne({
             project_id: new ObjectId(projectId),
-            feature_key: 'rules'
+            feature_key: 'media'
         });
 
         return NextResponse.json({
-            message: 'Rules generated',
+            message: 'Media suggestions generated',
             data: {
                 generated_output: generatedContent,
                 refactored_version: updatedFeature?.refactored_version
@@ -154,7 +147,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         });
 
     } catch (error) {
-        console.error('Save Rules error:', error);
+        console.error('Save Media error:', error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
 }
@@ -173,7 +166,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
         const db = await getDb();
         const feature = await db.collection('project_features').findOne({
             project_id: new ObjectId(projectId),
-            feature_key: 'rules'
+            feature_key: 'media'
         });
 
         return NextResponse.json({
@@ -185,7 +178,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
         });
 
     } catch (error) {
-        console.error('Get Rules error:', error);
+        console.error('Get Media error:', error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
 }

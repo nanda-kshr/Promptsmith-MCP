@@ -176,8 +176,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             'execute_coding.stage3': 30,
             'execute_coding.stage4': 40,
             'execute_coding.stage5': 50,
-            'execute_coding.stage6': 60,
-            'execute_coding.stage7': 70,
+            'execute_coding.stage7': 60,
         };
 
         // --- SUB-GENERATOR MAPPING ---
@@ -188,8 +187,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             'execute_coding.stage2': ['execute_coding.stage2.structure'],
             'execute_coding.stage3': ['execute_coding.stage3.batch'],
             'execute_coding.stage4': ['execute_coding.stage4.api_docs'],
-            'execute_coding.stage5': ['execute_coding.stage5.structure'],
-            'execute_coding.stage6': ['execute_coding.stage6.batch'],
+            'execute_coding.stage5': ['execute_coding.stage5.batch'],
             'execute_coding.stage7': ['execute_coding.stage7'],
             // Stage 8 removed
         };
@@ -197,7 +195,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         // 1. Fetch Full Context
         const projectFeatures = await db.collection('project_features').find({
             project_id: new ObjectId(projectId),
-            feature_key: { $in: ['vision', 'rules', 'tech_choices', 'data_models', 'apis', 'execute_coding'] }
+            feature_key: { $in: ['vision', 'user_flow', 'rules', 'tech_choices', 'data_models', 'apis', 'execute_coding'] }
         }).toArray();
 
 
@@ -226,6 +224,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         const applyContext = (text: string, subset?: any) => {
             let replaced = text
                 .replace('{{vision_output}}', getOutput('vision'))
+                .replace('{{user_flow_output}}', getOutput('user_flow'))
                 .replace('{{rules_output}}', getOutput('rules'))
                 .replace('{{tech_stack}}', getOutput('tech_choices'))
                 .replace('{{data_models_output}}', getOutput('data_models'))
@@ -261,17 +260,98 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         // 3. EXECUTION LOGIC
         let pagination: any = null;
 
-        if (stage === 'execute_coding.stage3' || stage === 'execute_coding.stage6') {
+        if (stage === 'execute_coding.stage3' || stage === 'execute_coding.stage5') {
             const offset = body.offset || 0;
             const limit = body.limit || 5;
 
-            // --- STAGE 3 & 6 SPECIAL: BATCH PROCESSING ---
-            const isFrontend = stage === 'execute_coding.stage6';
-            const promptKey = isFrontend ? 'execute_coding.stage6.batch' : 'execute_coding.stage3.batch';
-            const structureStage = isFrontend ? 'execute_coding.stage5' : 'execute_coding.stage2';
+            // --- STAGE 3 & 5 SPECIAL: BATCH PROCESSING ---
+            const isFlowLogic = stage === 'execute_coding.stage5';
+            const promptKey = 'execute_coding.stage3.batch';
+            const structureStage = 'execute_coding.stage2';
 
-            const promptConfig = await db.collection('feature_prompts').findOne({ feature_key: promptKey });
+            const stagePromptKey = isFlowLogic ? 'execute_coding.stage5.batch' : promptKey;
+            const promptConfig = await db.collection('feature_prompts').findOne({ feature_key: stagePromptKey });
             if (!promptConfig) throw new Error(`${stage} Batch Prompt not found`);
+
+            if (isFlowLogic) {
+                const userFlowRaw = getOutput('user_flow');
+                let flows: any[] = [];
+
+                try {
+                    const parsed = JSON.parse(userFlowRaw || '{}');
+                    flows = Array.isArray(parsed?.flows) ? parsed.flows : [];
+                } catch (e) {
+                    console.error('[execute_coding.stage5] Failed to parse user_flow output', e);
+                    throw new Error('Invalid User Flow Output. Please regenerate User Flow first.');
+                }
+
+                const mechanisms = flows.map((flow: any, idx: number) => ({
+                    mechanism_id: idx + 1,
+                    name: flow?.name || `Flow ${idx + 1}`,
+                    objective: typeof flow?.objective === 'string' ? flow.objective : '',
+                    steps: Array.isArray(flow?.steps) ? flow.steps : [],
+                    constraints: Array.isArray(flow?.constraints) ? flow.constraints : [],
+                    summary: `Implement complete backend flow logic for ${flow?.name || `Flow ${idx + 1}`}`
+                }));
+
+                const totalMechanisms = mechanisms.length;
+                const mechanismsToProcess = mechanisms.slice(offset, offset + limit);
+                const isComplete = (offset + limit) >= totalMechanisms;
+
+                console.log(`[${stage}] Processing Batch: ${offset} - ${offset + limit} (Total: ${totalMechanisms})`);
+
+                pagination = {
+                    offset,
+                    limit,
+                    total: totalMechanisms,
+                    nextOffset: offset + limit,
+                    isComplete
+                };
+
+                const generateMechanismBatch = async (batch: any[]): Promise<any[]> => {
+                    if (batch.length === 0) return [];
+
+                    console.log(`[${stage}] Generating batch of ${batch.length} mechanisms: ${batch.map((m: any) => m.name).join(', ')}`);
+
+                    let userPrompt = promptConfig.user_template.replace('{{mechanisms_batch}}', JSON.stringify(batch, null, 2));
+                    userPrompt = applyContext(userPrompt);
+                    const systemPrompt = applyContext(promptConfig.system_prompt);
+
+                    let aiOutput = '';
+                    try {
+                        aiOutput = await GeminiManager.generateWithRetry(payload.userId, userPrompt, systemPrompt, 1) || '';
+
+                        const jsonStart = aiOutput.indexOf('{');
+                        const jsonEnd = aiOutput.lastIndexOf('}');
+                        let parsed: any = null;
+
+                        if (jsonStart !== -1 && jsonEnd !== -1) {
+                            try {
+                                const cleanJson = aiOutput.substring(jsonStart, jsonEnd + 1);
+                                parsed = JSON.parse(cleanJson);
+                            } catch (e) {
+                                console.warn('[Stage 5] Initial Parse Failed', e);
+                            }
+                        }
+
+                        if (!parsed) {
+                            parsed = await GeminiManager.repairJson(payload.userId, aiOutput);
+                        }
+
+                        if (!parsed || !parsed.prompts) throw new Error('Failed to parse');
+
+                        console.log(`[${stage}] Batch Output Prompts: ${parsed.prompts.length}. Titles: ${parsed.prompts.map((p: any) => p.title).join(', ')}`);
+                        return parsed.prompts || [];
+                    } catch (error: any) {
+                        console.error(`[${stage}] Batch Error`, error);
+                        return [];
+                    }
+                };
+
+                if (mechanismsToProcess.length > 0) {
+                    allPrompts = await generateMechanismBatch(mechanismsToProcess);
+                }
+            } else {
 
             // A. Get Input from Structure Stage (2 or 5)
             const structurePrompt = await db.collection('generated_prompts').findOne({
@@ -300,13 +380,130 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
 
 
-            let sortedFiles = flattenFileTree(structureJson.tree || []);
+            // Stage 2 may now return split format with backend_tree/frontend_tree.
+            // Stage 3 should generate backend/core files only.
+            let selectedTree: any[] = [];
+            if (Array.isArray(structureJson.tree)) {
+                selectedTree = structureJson.tree;
+            } else if (Array.isArray(structureJson.backend_tree)) {
+                selectedTree = structureJson.backend_tree;
+            } else if (structureJson.trees?.backend && Array.isArray(structureJson.trees.backend)) {
+                selectedTree = structureJson.trees.backend;
+            }
+
+            // Support both nested tree format and flat file-list format.
+            let sortedFiles: any[] = [];
+            const isFlatFileList = Array.isArray(selectedTree)
+                && selectedTree.length > 0
+                && selectedTree.every((n: any) => typeof n?.path === 'string');
+
+            if (isFlatFileList) {
+                const inferCategory = (filePath: string) => {
+                    const p = (filePath || '').toLowerCase();
+                    if (p.includes('middleware') || p.includes('interceptor') || p.includes('/lib/') || p.includes('/config/') || p.includes('/types/')) return 'core_infra';
+                    if (p.includes('/api/') || p.includes('/controller')) return 'api_layer';
+                    if (p.includes('/model') || p.includes('/schema') || p.includes('/repo')) return 'data_layer';
+                    if (p.includes('/service') || p.includes('/usecase')) return 'business_logic';
+                    if (p.includes('/components/') || p.includes('/hooks/') || p.includes('/app/') || p.endsWith('.tsx')) return 'frontend_ui';
+                    if (p.includes('/test') || p.includes('.spec.') || p.includes('.test.')) return 'testing';
+                    return 'feature_flow';
+                };
+
+                sortedFiles = selectedTree.map((f: any) => ({
+                    name: (f.path || '').split('/').pop() || f.name || 'file',
+                    path: f.path,
+                    category: f.category || inferCategory(f.path || ''),
+                    order: f.order || 0,
+                    dependencies: Array.isArray(f.dependencies) ? f.dependencies : [],
+                    summary: f.summary || ''
+                }));
+            } else {
+                const inferCategory = (filePath: string) => {
+                    const p = (filePath || '').toLowerCase();
+                    if (p.includes('middleware') || p.includes('interceptor') || p.includes('/lib/') || p.includes('/config/') || p.includes('/types/')) return 'core_infra';
+                    if (p.includes('/api/') || p.includes('/controller')) return 'api_layer';
+                    if (p.includes('/model') || p.includes('/schema') || p.includes('/repo')) return 'data_layer';
+                    if (p.includes('/service') || p.includes('/usecase')) return 'business_logic';
+                    if (p.includes('/components/') || p.includes('/hooks/') || p.includes('/app/') || p.endsWith('.tsx')) return 'frontend_ui';
+                    if (p.includes('/test') || p.includes('.spec.') || p.includes('.test.')) return 'testing';
+                    return 'feature_flow';
+                };
+
+                sortedFiles = flattenFileTree(selectedTree || []).map((f: any) => ({
+                    ...f,
+                    category: f.category || inferCategory(f.path || f.name || '')
+                }));
+            }
 
             // Deterministic Sort
+            const categoryRank: Record<string, number> = {
+                core_infra: 0,
+                data_layer: 1,
+                business_logic: 2,
+                api_layer: 3,
+                feature_flow: 4,
+                frontend_ui: 5,
+                testing: 6
+            };
+
             sortedFiles.sort((a, b) => {
+                const rankA = categoryRank[a.category || 'feature_flow'] ?? 99;
+                const rankB = categoryRank[b.category || 'feature_flow'] ?? 99;
+                if (rankA !== rankB) return rankA - rankB;
                 if ((a.order || 0) !== (b.order || 0)) return (a.order || 0) - (b.order || 0);
                 return (a.path || a.name || "").localeCompare(b.path || b.name || "");
             });
+
+            // Core Setup should only generate foundational backend/core files,
+            // not flow-specific/frontend/testing files.
+            if (stage === 'execute_coding.stage3') {
+                const allowedCoreCategories = new Set(['core_infra', 'data_layer', 'business_logic', 'api_layer']);
+                const isCoreSetupPath = (filePath: string) => {
+                    const p = (filePath || '').toLowerCase();
+
+                    // Explicit excludes: feature/domain implementation should not be part of core setup.
+                    if (
+                        p.includes('/app/api/') ||
+                        p.includes('/api/') ||
+                        p.includes('/models/') ||
+                        p.includes('/model/') ||
+                        p.includes('/services/') ||
+                        p.includes('/service/') ||
+                        p.includes('/controllers/') ||
+                        p.includes('/controller/') ||
+                        p.includes('/features/') ||
+                        p.includes('/components/') ||
+                        p.includes('/hooks/') ||
+                        p.includes('.test.') ||
+                        p.includes('.spec.') ||
+                        p.endsWith('.tsx')
+                    ) {
+                        return false;
+                    }
+
+                    // Explicit includes: foundational cross-cutting setup.
+                    return (
+                        p.includes('/lib/') ||
+                        p.includes('/config/') ||
+                        p.includes('/types/') ||
+                        p.includes('middleware') ||
+                        p.includes('interceptor') ||
+                        p.includes('mongo') ||
+                        p.includes('/db/') ||
+                        p.includes('auth') ||
+                        p.includes('/shared/') ||
+                        p.includes('/utils/') ||
+                        p.includes('/repositories/') ||
+                        p.includes('/repository/')
+                    );
+                };
+
+                sortedFiles = sortedFiles.filter((f: any) => {
+                    const categoryOk = allowedCoreCategories.has(f.category || 'feature_flow');
+                    const path = f.path || f.name || '';
+                    return categoryOk && isCoreSetupPath(path);
+                });
+            }
 
             const totalFiles = sortedFiles.length;
 
@@ -333,6 +530,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
                 // Prepare Input
                 const fileInputs = files.map(f => ({
                     path: f.path || f.name,
+                    category: f.category || 'feature_flow',
                     summary: f.summary,
                     dependencies: f.dependencies
                 }));
@@ -375,6 +573,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             // execute
             if (filesToProcess.length > 0) {
                 allPrompts = await generateBatch(filesToProcess);
+            }
             }
 
         } else {
@@ -474,10 +673,30 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
                                     promptEntry.prompt_text = JSON.stringify(promptJson, null, 2);
                                 }
 
-                                if (promptJson.ENV) {
+                                const hasFlexibleEnv =
+                                    promptJson.ARCHITECTURE_MODE ||
+                                    promptJson.FRONTEND_ENV ||
+                                    promptJson.BACKEND_ENV ||
+                                    promptJson.MONOLITH_ENV;
+
+                                if (hasFlexibleEnv || promptJson.ENV) {
+                                    const normalizedEnv = promptJson.ENV
+                                        ? {
+                                            ARCHITECTURE_MODE: 'MONOLITH',
+                                            FRONTEND_ENV: {},
+                                            BACKEND_ENV: {},
+                                            MONOLITH_ENV: promptJson.ENV
+                                        }
+                                        : {
+                                            ARCHITECTURE_MODE: promptJson.ARCHITECTURE_MODE || 'SPLIT',
+                                            FRONTEND_ENV: promptJson.FRONTEND_ENV || {},
+                                            BACKEND_ENV: promptJson.BACKEND_ENV || {},
+                                            MONOLITH_ENV: promptJson.MONOLITH_ENV || {}
+                                        };
+
                                     await db.collection('project_features').updateOne(
                                         { project_id: new ObjectId(projectId), feature_key: 'execute_coding' },
-                                        { $set: { 'recommended_env_vars': promptJson.ENV } }
+                                        { $set: { 'recommended_env_vars': normalizedEnv } }
                                     );
                                 }
                             } catch (envErr) {
@@ -541,7 +760,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         if (formattedPrompts.length > 0) {
             // Cleanup previous prompts for this stage to ensure idempotency
             // For Stage 3 & 6 (Batching), ONLY clear on the first batch (offset 0)
-            const isBatchStage = stage === 'execute_coding.stage3' || stage === 'execute_coding.stage6';
+            const isBatchStage = stage === 'execute_coding.stage3' || stage === 'execute_coding.stage5';
             const shouldClear = !isBatchStage || (body.offset === 0 || !body.offset);
 
             if (shouldClear) {
@@ -557,7 +776,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         }
 
         // Save Summary/Status for this stage
-        const isBatchStage = stage === 'execute_coding.stage3' || stage === 'execute_coding.stage6';
+        const isBatchStage = stage === 'execute_coding.stage3' || stage === 'execute_coding.stage5';
         const isFinalBatch = !isBatchStage || (pagination && pagination.isComplete);
 
         const updateDoc: any = {

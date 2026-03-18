@@ -17,7 +17,19 @@ interface RulesTabProps {
         current_rules?: RulesData;
         ignored_rules?: RulesData;
         user_custom_input?: string;
+        media_generated_output?: string;
     };
+}
+
+interface MediaFile {
+    file_name: string;
+    prompt?: string;
+}
+
+interface MediaItem {
+    name: string;
+    description: string;
+    files?: MediaFile[];
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -34,31 +46,89 @@ const CATEGORY_DESCRIPTIONS: Record<string, string> = {
     system_constraints: 'Tech Stack Limits, Performance, Security'
 };
 
+const EMPTY_RULES: RulesData = {
+    data_rules: [],
+    access_rules: [],
+    behavior_rules: [],
+    system_constraints: []
+};
+
+function cloneRules(rules: RulesData): RulesData {
+    return {
+        data_rules: [...(rules.data_rules || [])],
+        access_rules: [...(rules.access_rules || [])],
+        behavior_rules: [...(rules.behavior_rules || [])],
+        system_constraints: [...(rules.system_constraints || [])]
+    };
+}
+
 export default function RulesTab({ projectId, initialData }: RulesTabProps) {
     const router = useRouter();
     const [loading, setLoading] = useState(false);
     const [customInput, setCustomInput] = useState(initialData?.user_custom_input || '');
 
     // Parse Initial Data
-    const initialRules: RulesData | null = (() => {
-        if (!initialData?.generated_output) return null;
+    const initialRules: RulesData = (() => {
+        if (!initialData?.generated_output) {
+            return cloneRules(initialData?.current_rules || EMPTY_RULES);
+        }
         try {
             const cleanJson = initialData.generated_output.replace(/```json\n?|\n?```/g, '').trim();
             const parsed = JSON.parse(cleanJson);
-            return parsed.rules || parsed;
+            const parsedRules = (parsed.rules || parsed) as RulesData;
+            return cloneRules(parsedRules || initialData?.current_rules || EMPTY_RULES);
         } catch (e) {
             console.error("Failed to parse initial rules", e);
-            return null;
+            return cloneRules(initialData?.current_rules || EMPTY_RULES);
         }
     })();
 
-    const [activeRules, setActiveRules] = useState<RulesData>(initialRules || {
-        data_rules: [], access_rules: [], behavior_rules: [], system_constraints: []
-    });
+    const initialIgnoredRules: RulesData = cloneRules(initialData?.ignored_rules || EMPTY_RULES);
 
-    const [ignoredRules, setIgnoredRules] = useState<RulesData>(initialData?.ignored_rules || {
-        data_rules: [], access_rules: [], behavior_rules: [], system_constraints: []
-    });
+    const [activeRules, setActiveRules] = useState<RulesData>(cloneRules(initialRules));
+
+    const [ignoredRules, setIgnoredRules] = useState<RulesData>(cloneRules(initialIgnoredRules));
+
+    const mediaItems: MediaItem[] = (() => {
+        if (!initialData?.media_generated_output) return [];
+        try {
+            const cleanJson = initialData.media_generated_output.replace(/```json\n?|\n?```/g, '').trim();
+            const parsed = JSON.parse(cleanJson);
+            return Array.isArray(parsed.images) ? parsed.images : [];
+        } catch (e) {
+            console.error('Failed to parse media output in rules tab', e);
+            return [];
+        }
+    })();
+
+    const handleReset = async () => {
+        setLoading(true);
+        try {
+            const emptyRules = cloneRules(EMPTY_RULES);
+            const res = await fetch(`/api/projects/${projectId}/rules`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    current_rules: emptyRules,
+                    ignored_rules: emptyRules,
+                    user_custom_input: '',
+                    save_only: true
+                })
+            });
+
+            if (!res.ok) throw new Error('Failed to reset rules');
+
+            setActiveRules(emptyRules);
+            setIgnoredRules(emptyRules);
+            setCustomInput('');
+            router.refresh();
+        } catch (error) {
+            console.error(error);
+            alert('Failed to reset rules. Please try again.');
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const toggleRule = (category: keyof RulesData, rule: string, isRemoving: boolean) => {
         if (isRemoving) {
@@ -82,7 +152,7 @@ export default function RulesTab({ projectId, initialData }: RulesTabProps) {
         }
     };
 
-    const handleSave = async () => {
+    const handleGenerate = async () => {
         setLoading(true);
         try {
             const res = await fetch(`/api/projects/${projectId}/rules`, {
@@ -117,6 +187,30 @@ export default function RulesTab({ projectId, initialData }: RulesTabProps) {
         }
     };
 
+    const handleSaveAndNext = async () => {
+        setLoading(true);
+        try {
+            const res = await fetch(`/api/projects/${projectId}/rules`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    current_rules: activeRules,
+                    ignored_rules: ignoredRules,
+                    user_custom_input: customInput,
+                    save_only: true
+                })
+            });
+
+            if (!res.ok) throw new Error('Failed to save rules');
+            router.push(`/projects/${projectId}?tab=data_models`);
+        } catch (error) {
+            console.error(error);
+            alert('Failed to save rules. Please try again.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const hasRules = Object.values(activeRules).some(arr => arr?.length > 0);
 
     return (
@@ -125,6 +219,30 @@ export default function RulesTab({ projectId, initialData }: RulesTabProps) {
                 <h2 className="text-2xl font-bold text-white">System Rules & Constraints</h2>
                 <p className="text-neutral-400">Review the AI-generated rules. Remove any that don't fit.</p>
             </div>
+
+            {mediaItems.length > 0 && (
+                <div className="space-y-3 p-4 rounded-xl border border-blue-900/30 bg-blue-900/5">
+                    <h3 className="text-sm font-bold text-blue-300 uppercase tracking-wider">
+                        These are the images we are going to use
+                    </h3>
+                    <div className="space-y-3">
+                        {mediaItems.map((item, idx) => (
+                            <div key={idx} className="p-3 rounded-lg bg-neutral-900/70 border border-neutral-800">
+                                <p className="text-sm font-semibold text-blue-300">{item.name}</p>
+                                <p className="text-xs text-neutral-300 mt-0.5">{item.description}</p>
+                                {item.files && item.files.length > 0 && (
+                                    <div className="mt-2">
+                                        <p className="text-[10px] uppercase tracking-wider text-neutral-500">Image files</p>
+                                        <p className="text-xs text-neutral-400 mt-1 break-all">
+                                            {item.files.map(f => f.file_name).join(', ')}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {hasRules ? (
                 <div className="space-y-8">
@@ -202,9 +320,32 @@ export default function RulesTab({ projectId, initialData }: RulesTabProps) {
             </div>
 
             {/* Action Bar */}
-            <div className="flex justify-end pt-4 sticky bottom-4 z-20">
+            <div className="flex justify-end gap-3 pt-4 sticky bottom-4 z-20">
                 <button
-                    onClick={handleSave}
+                    type="button"
+                    onClick={handleReset}
+                    className="relative z-30 pointer-events-auto bg-neutral-800 text-neutral-200 px-6 py-3 rounded-xl font-bold hover:bg-neutral-700 transition-all border border-neutral-700"
+                >
+                    Reset
+                </button>
+                <button
+                    type="button"
+                    onClick={handleSaveAndNext}
+                    disabled={loading}
+                    className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-xl shadow-blue-900/20"
+                >
+                    {loading ? (
+                        <>
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Saving...
+                        </>
+                    ) : (
+                        'Save & Next'
+                    )}
+                </button>
+                <button
+                    type="button"
+                    onClick={handleGenerate}
                     disabled={loading}
                     className="bg-white text-black px-8 py-3 rounded-xl font-bold hover:bg-neutral-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-xl shadow-white/5"
                 >
@@ -214,7 +355,7 @@ export default function RulesTab({ projectId, initialData }: RulesTabProps) {
                             Thinking...
                         </>
                     ) : (
-                        hasRules ? 'Save & Regenerate' : 'Generate System Rules'
+                        hasRules ? 'Regenerate Suggestions' : 'Generate System Rules'
                     )}
                 </button>
             </div>

@@ -21,6 +21,11 @@ const EXPERT_MODE = {
             method: "USER_INPUT",
             enabled: true
         },
+        media: {
+            name: "Media",
+            method: "USER_INPUT",
+            enabled: true
+        },
         rules: {
             name: "Rules",
             method: "USER_INPUT",

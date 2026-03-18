@@ -126,7 +126,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         const statusUpdate = isCompleted ? {
             "features.tech_choices.status": "COMPLETED",
             "features.tech_choices.updatedAt": new Date(),
-            "features.data_models.status": "IN_PROGRESS" // Unlock next step
+            "features.media.status": "IN_PROGRESS" // Unlock next step (Media comes after Tech Choices)
         } : {
             "features.tech_choices.status": "IN_PROGRESS", // Keep in progress
             "features.tech_choices.updatedAt": new Date()

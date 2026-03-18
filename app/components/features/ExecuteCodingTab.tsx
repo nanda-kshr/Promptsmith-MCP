@@ -12,14 +12,13 @@ interface ExecuteCodingTabProps {
 
 // Stage Definition from Plan
 const STAGES = [
-    { key: 'execute_coding.check', label: '0. Pre-Flight Check', description: 'Verify Project Initialization' },
-    { key: 'execute_coding.stage1', label: '1. Environment', description: 'Setup .env and config' },
+    { key: 'execute_coding.check', label: '0. Pre-Flight Bootstrap', description: 'Create frontend/backend and initialize project' },
+    { key: 'execute_coding.stage1', label: '1. Environment', description: 'Create frontend/backend env files' },
     { key: 'execute_coding.stage2', label: '2. Skeleton', description: 'Create folders and files' },
     { key: 'execute_coding.stage3', label: '3. Core Setup', description: 'Bootstrap entry points' },
     { key: 'execute_coding.stage4', label: '4. API Docs', description: 'Generate API.md' },
-    { key: 'execute_coding.stage5', label: '5. Frontend Skeleton', description: 'Create frontend folders' },
-    { key: 'execute_coding.stage6', label: '6. Frontend Code', description: 'Generate frontend files' },
-    { key: 'execute_coding.stage7', label: '7. API Tests', description: 'Generate Test Suite' },
+    { key: 'execute_coding.stage5', label: '5. Flow Logic Implementation', description: 'Generate backend flow prompts mechanism-by-mechanism' },
+    { key: 'execute_coding.stage7', label: '6. API Tests', description: 'Generate Test Suite' },
 ];
 
 export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodingTabProps) {
@@ -78,7 +77,7 @@ export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodi
         setPrompts(prev => prev.filter(p => p.stage !== stageKey));
 
         try {
-            if (stageKey === 'execute_coding.stage3' || stageKey === 'execute_coding.stage6') {
+            if (stageKey === 'execute_coding.stage3' || stageKey === 'execute_coding.stage5') {
                 // --- BATCH MODE ---
                 let offset = 0;
                 let isComplete = false;
@@ -350,13 +349,12 @@ export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodi
                         {currentStageIndex === 1 && prompts.filter(p => p.stage === STAGES[1].key).length > 0 ? (
                             <EnvVarEditor
                                 originalPrompts={prompts.filter(p => p.stage === STAGES[1].key)}
-                                onSave={async (newVars) => {
+                                onSave={async (newPayload) => {
                                     // 1. Construct new JSON Prompt Text
                                     const promptToUpdate = prompts.find(p => p.stage === STAGES[1].key);
                                     if (!promptToUpdate) return;
 
-                                    const newJson = { ENV: newVars };
-                                    const newText = JSON.stringify(newJson, null, 2);
+                                    const newText = JSON.stringify(newPayload, null, 2);
 
                                     // 2. Call API to update DB
                                     try {
@@ -367,8 +365,8 @@ export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodi
                                     }
                                 }}
                             />
-                        ) : (currentStageIndex === 2 || currentStageIndex === 5) && prompts.length > 0 ? (
-                            /* STAGE 2 & 5 SPECIAL UI: FILE TREE with TOGGLE */
+                        ) : currentStageIndex === 2 && prompts.length > 0 ? (
+                            /* STAGE 2 SPECIAL UI: FILE TREE with TOGGLE */
                             <div className="space-y-4">
                                 <div className="flex justify-end gap-2">
                                     <button
@@ -416,40 +414,110 @@ export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodi
 
 // --- SUB-COMPONENT: Env Var Editor ---
 function EnvVarEditor({ originalPrompts, onSave }: { originalPrompts: any[], onSave: (vars: any) => void }) {
-    const [envVars, setEnvVars] = useState<Record<string, string>>({});
+    const [architectureMode, setArchitectureMode] = useState<'MONOLITH' | 'SPLIT'>('SPLIT');
+    const [frontendEnv, setFrontendEnv] = useState<Record<string, string>>({});
+    const [backendEnv, setBackendEnv] = useState<Record<string, string>>({});
+    const [monolithEnv, setMonolithEnv] = useState<Record<string, string>>({});
     const [parsed, setParsed] = useState(false);
 
     useEffect(() => {
         if (originalPrompts.length > 0 && !parsed) {
             try {
-                // Extracts JSON from the first prompt's text
                 const text = originalPrompts[0].prompt_text;
-                // AI might wrap in ```json ... ``` or just return the object string
                 const clean = text.replace(/```json\n?|\n?```/g, '').trim();
                 const json = JSON.parse(clean);
 
                 if (json.ENV) {
-                    setEnvVars(json.ENV);
-                    setParsed(true);
+                    // Backward compatibility for old prompt format
+                    setArchitectureMode('MONOLITH');
+                    setMonolithEnv(json.ENV || {});
+                    setFrontendEnv({});
+                    setBackendEnv({});
+                } else {
+                    setArchitectureMode(json.ARCHITECTURE_MODE === 'MONOLITH' ? 'MONOLITH' : 'SPLIT');
+                    setFrontendEnv(json.FRONTEND_ENV || {});
+                    setBackendEnv(json.BACKEND_ENV || {});
+                    setMonolithEnv(json.MONOLITH_ENV || {});
                 }
             } catch (e) {
                 console.error("Failed to parse Env Vars JSON", e);
+            } finally {
+                setParsed(true);
             }
         }
     }, [originalPrompts]);
 
-    const handleChange = (key: string, desc: string) => {
-        setEnvVars(prev => ({ ...prev, [key]: desc }));
+    const setSection = (section: 'FRONTEND' | 'BACKEND' | 'MONOLITH', next: Record<string, string>) => {
+        if (section === 'FRONTEND') setFrontendEnv(next);
+        if (section === 'BACKEND') setBackendEnv(next);
+        if (section === 'MONOLITH') setMonolithEnv(next);
     };
 
-    const handleDelete = (key: string) => {
-        const newVars = { ...envVars };
-        delete newVars[key];
-        setEnvVars(newVars);
+    const getSection = (section: 'FRONTEND' | 'BACKEND' | 'MONOLITH') => {
+        if (section === 'FRONTEND') return frontendEnv;
+        if (section === 'BACKEND') return backendEnv;
+        return monolithEnv;
     };
 
-    const handleAdd = () => {
-        setEnvVars(prev => ({ ...prev, "NEW_VAR": "Description here..." }));
+    const handleChange = (section: 'FRONTEND' | 'BACKEND' | 'MONOLITH', key: string, desc: string) => {
+        setSection(section, { ...getSection(section), [key]: desc });
+    };
+
+    const handleDelete = (section: 'FRONTEND' | 'BACKEND' | 'MONOLITH', key: string) => {
+        const next = { ...getSection(section) };
+        delete next[key];
+        setSection(section, next);
+    };
+
+    const handleAdd = (section: 'FRONTEND' | 'BACKEND' | 'MONOLITH') => {
+        setSection(section, { ...getSection(section), NEW_VAR: 'Description here...' });
+    };
+
+    const renderEnvSection = (title: string, section: 'FRONTEND' | 'BACKEND' | 'MONOLITH') => {
+        const sectionVars = getSection(section);
+        return (
+            <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                    <h5 className="text-xs uppercase tracking-wider text-neutral-500">{title}</h5>
+                    <button onClick={() => handleAdd(section)} className="text-xs bg-neutral-800 px-3 py-1 rounded hover:bg-neutral-700">
+                        + Add Variable
+                    </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {Object.entries(sectionVars).map(([key, desc]) => (
+                        <div key={key} className="bg-black/50 border border-neutral-800 p-4 rounded-lg relative group">
+                            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onClick={() => handleDelete(section, key)} className="text-red-500 hover:text-red-400">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                        <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 001.5.06l.3-7.5z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <input
+                                value={key}
+                                onChange={(e) => {
+                                    const newKey = e.target.value;
+                                    const val = sectionVars[key];
+                                    const next = { ...sectionVars };
+                                    delete next[key];
+                                    next[newKey] = val;
+                                    setSection(section, next);
+                                }}
+                                className="bg-transparent font-mono text-emerald-400 font-bold w-full mb-2 focus:outline-none focus:border-b border-emerald-500/50"
+                            />
+                            <textarea
+                                value={desc}
+                                onChange={(e) => handleChange(section, key, e.target.value)}
+                                className="bg-transparent text-xs text-neutral-400 w-full resize-none focus:outline-none"
+                                rows={2}
+                            />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
     };
 
     if (!parsed) return <div className="text-neutral-500">Parsing Env Configuration...</div>;
@@ -459,50 +527,36 @@ function EnvVarEditor({ originalPrompts, onSave }: { originalPrompts: any[], onS
             <div className="flex justify-between items-center">
                 <div className="flex items-center gap-4">
                     <h4 className="font-bold text-blue-400 text-sm">Environment Configuration</h4>
+                    <select
+                        value={architectureMode}
+                        onChange={(e) => setArchitectureMode(e.target.value as 'MONOLITH' | 'SPLIT')}
+                        className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs text-neutral-200"
+                    >
+                        <option value="SPLIT">SPLIT</option>
+                        <option value="MONOLITH">MONOLITH</option>
+                    </select>
                     <button
-                        onClick={() => onSave(envVars)}
+                        onClick={() => onSave({
+                            ARCHITECTURE_MODE: architectureMode,
+                            FRONTEND_ENV: architectureMode === 'SPLIT' ? frontendEnv : {},
+                            BACKEND_ENV: architectureMode === 'SPLIT' ? backendEnv : {},
+                            MONOLITH_ENV: architectureMode === 'MONOLITH' ? monolithEnv : {}
+                        })}
                         className="text-xs bg-emerald-500/20 text-emerald-500 border border-emerald-500/50 px-3 py-1 rounded hover:bg-emerald-500/30 transition-colors"
                     >
                         Save Changes
                     </button>
                 </div>
-                <button onClick={handleAdd} className="text-xs bg-neutral-800 px-3 py-1 rounded hover:bg-neutral-700">
-                    + Add Variable
-                </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {Object.entries(envVars).map(([key, desc]) => (
-                    <div key={key} className="bg-black/50 border border-neutral-800 p-4 rounded-lg relative group">
-                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => handleDelete(key)} className="text-red-500 hover:text-red-400">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                                    <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 001.5.06l.3-7.5z" clipRule="evenodd" />
-                                </svg>
-                            </button>
-                        </div>
-
-                        <input
-                            value={key}
-                            onChange={(e) => {
-                                const newKey = e.target.value;
-                                const val = envVars[key];
-                                const newObj = { ...envVars };
-                                delete newObj[key];
-                                newObj[newKey] = val;
-                                setEnvVars(newObj);
-                            }}
-                            className="bg-transparent font-mono text-emerald-400 font-bold w-full mb-2 focus:outline-none focus:border-b border-emerald-500/50"
-                        />
-                        <textarea
-                            value={desc}
-                            onChange={(e) => handleChange(key, e.target.value)}
-                            className="bg-transparent text-xs text-neutral-400 w-full resize-none focus:outline-none"
-                            rows={2}
-                        />
-                    </div>
-                ))}
-            </div>
+            {architectureMode === 'MONOLITH'
+                ? renderEnvSection('Monolith Env', 'MONOLITH')
+                : (
+                    <>
+                        {renderEnvSection('Frontend Env', 'FRONTEND')}
+                        {renderEnvSection('Backend Env', 'BACKEND')}
+                    </>
+                )}
         </div>
     );
 }
@@ -510,6 +564,10 @@ function EnvVarEditor({ originalPrompts, onSave }: { originalPrompts: any[], onS
 // --- SUB-COMPONENT: File Tree Viewer ---
 function FileTreeViewer({ promptText }: { promptText: string }) {
     const [treeData, setTreeData] = useState<any[]>([]);
+    const [backendTreeData, setBackendTreeData] = useState<any[]>([]);
+    const [frontendTreeData, setFrontendTreeData] = useState<any[]>([]);
+    const [architectureMode, setArchitectureMode] = useState<'MONOLITH' | 'SPLIT'>('MONOLITH');
+    const [activeTree, setActiveTree] = useState<'monolith' | 'backend' | 'frontend'>('monolith');
     const [parsed, setParsed] = useState(false);
 
     useEffect(() => {
@@ -520,13 +578,82 @@ function FileTreeViewer({ promptText }: { promptText: string }) {
             const jsonMatch = clean.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 const json = JSON.parse(jsonMatch[0]);
-                if (json.tree) {
+                const mode = json.architecture_mode === 'SPLIT' ? 'SPLIT' : 'MONOLITH';
+                setArchitectureMode(mode);
+
+                if (mode === 'SPLIT') {
+                    const backend = Array.isArray(json.backend_tree) ? json.backend_tree : [];
+                    const frontend = Array.isArray(json.frontend_tree) ? json.frontend_tree : [];
+                    setBackendTreeData(backend);
+                    setFrontendTreeData(frontend);
+                    setTreeData([]);
+                    setActiveTree('backend');
+                    setParsed(backend.length > 0 || frontend.length > 0);
+                } else if (json.tree) {
                     setTreeData(json.tree);
+                    setBackendTreeData([]);
+                    setFrontendTreeData([]);
+                    setActiveTree('monolith');
                     setParsed(true);
                 }
             }
         } catch (e) { console.error("Tree Parse Error", e); }
     }, [promptText]);
+
+    const isFlatFileList = (nodes: any[]) => {
+        return Array.isArray(nodes) && nodes.length > 0 && nodes.every((n: any) => typeof n?.path === 'string');
+    };
+
+    const buildTreeFromPaths = (flatFiles: any[]) => {
+        const root: any[] = [];
+
+        const ensureFolder = (children: any[], folderName: string) => {
+            let folder = children.find((node: any) => node.type === 'folder' && node.name === folderName);
+            if (!folder) {
+                folder = { name: folderName, type: 'folder', children: [] };
+                children.push(folder);
+            }
+            return folder;
+        };
+
+        for (const file of flatFiles) {
+            const rawPath = file.path || file.name;
+            if (!rawPath) continue;
+
+            const parts = String(rawPath).split('/').filter(Boolean);
+            if (parts.length === 0) continue;
+
+            let currentChildren = root;
+            for (let i = 0; i < parts.length - 1; i++) {
+                const folder = ensureFolder(currentChildren, parts[i]);
+                currentChildren = folder.children;
+            }
+
+            const fileName = parts[parts.length - 1];
+            currentChildren.push({
+                name: fileName,
+                type: 'file',
+                path: rawPath,
+                order: file.order,
+                dependencies: file.dependencies,
+                summary: file.summary,
+                children: []
+            });
+        }
+
+        const sortNodes = (nodes: any[]) => {
+            nodes.sort((a, b) => {
+                if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+                return String(a.name || '').localeCompare(String(b.name || ''));
+            });
+            for (const node of nodes) {
+                if (node.type === 'folder' && Array.isArray(node.children)) sortNodes(node.children);
+            }
+        };
+
+        sortNodes(root);
+        return root;
+    };
 
     if (!parsed) return <div className="text-neutral-500 text-xs text-center p-4 border border-neutral-800 rounded">Analysis in progress... Raw output available below.</div>;
 
@@ -555,13 +682,40 @@ function FileTreeViewer({ promptText }: { promptText: string }) {
         );
     };
 
+    const currentTreeRaw = architectureMode === 'SPLIT'
+        ? (activeTree === 'frontend' ? frontendTreeData : backendTreeData)
+        : treeData;
+
+    const currentTree = isFlatFileList(currentTreeRaw)
+        ? buildTreeFromPaths(currentTreeRaw)
+        : currentTreeRaw;
+
     return (
         <div className="bg-black/50 border border-neutral-800 rounded-lg p-4 overflow-x-auto max-h-[500px]">
-            <h4 className="font-bold text-yellow-500 text-sm mb-4 sticky top-0 bg-black/90 p-2 border-b border-neutral-800">
-                Proposed File Structure
-            </h4>
+            <div className="mb-4 sticky top-0 bg-black/90 p-2 border-b border-neutral-800 flex items-center justify-between gap-3">
+                <h4 className="font-bold text-yellow-500 text-sm">
+                    Proposed File Structure
+                </h4>
+
+                {architectureMode === 'SPLIT' && (
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setActiveTree('backend')}
+                            className={`text-xs px-3 py-1 rounded ${activeTree === 'backend' ? 'bg-blue-500/20 text-blue-400' : 'text-neutral-500 hover:text-white'}`}
+                        >
+                            Backend
+                        </button>
+                        <button
+                            onClick={() => setActiveTree('frontend')}
+                            className={`text-xs px-3 py-1 rounded ${activeTree === 'frontend' ? 'bg-blue-500/20 text-blue-400' : 'text-neutral-500 hover:text-white'}`}
+                        >
+                            Frontend
+                        </button>
+                    </div>
+                )}
+            </div>
             <div className="space-y-1">
-                {treeData.map(node => renderNode(node))}
+                {currentTree.map(node => renderNode(node))}
             </div>
         </div>
     );

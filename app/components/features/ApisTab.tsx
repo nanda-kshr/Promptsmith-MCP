@@ -34,6 +34,7 @@ export default function ApisTab({ projectId, initialData }: ApisTabProps) {
     const [status, setStatus] = useState<GenerationStep>('idle');
     const [customInput, setCustomInput] = useState(initialData?.user_custom_input || '');
     const [error, setError] = useState<string | null>(null);
+    const initialCustomInput = initialData?.user_custom_input || '';
 
     // Parse APIs
     const apis: ApiEndpoint[] = (() => {
@@ -92,6 +93,39 @@ export default function ApisTab({ projectId, initialData }: ApisTabProps) {
             setError(error.message || 'Generation failed');
             setStatus('idle');
         }
+    };
+
+    const handleSaveAndNext = async () => {
+        setStatus('actions');
+        setError(null);
+        try {
+            const res = await fetch(`/api/projects/${projectId}/apis`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    step: 'save_only',
+                    current_apis: apis,
+                    user_custom_input: customInput
+                })
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.error || 'Failed to save APIs');
+            }
+
+            router.push(`/projects/${projectId}?tab=execute_coding`);
+        } catch (error: any) {
+            console.error(error);
+            setError(error.message || 'Save failed');
+            setStatus('idle');
+        }
+    };
+
+    const handleReset = () => {
+        setCustomInput(initialCustomInput);
+        setError(null);
+        setStatus('idle');
     };
 
     const hasApis = apis.length > 0;
@@ -208,7 +242,28 @@ export default function ApisTab({ projectId, initialData }: ApisTabProps) {
                 />
             </div>
 
-            <div className="flex justify-end pt-4 sticky bottom-4 z-20">
+            <div className="flex justify-end gap-3 pt-4 sticky bottom-4 z-20">
+                <button
+                    onClick={handleReset}
+                    disabled={isGenerating}
+                    className="bg-neutral-800 text-neutral-200 px-6 py-3 rounded-xl font-bold hover:bg-neutral-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-neutral-700"
+                >
+                    Reset
+                </button>
+                <button
+                    onClick={handleSaveAndNext}
+                    disabled={isGenerating}
+                    className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-xl shadow-blue-900/20"
+                >
+                    {isGenerating ? (
+                        <>
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Saving...
+                        </>
+                    ) : (
+                        'Save & Next'
+                    )}
+                </button>
                 <button
                     onClick={handleGenerate}
                     disabled={isGenerating}
@@ -220,7 +275,7 @@ export default function ApisTab({ projectId, initialData }: ApisTabProps) {
                             Processing...
                         </>
                     ) : (
-                        hasApis ? 'Regenerate APIs' : 'Generate APIs'
+                        hasApis ? 'Regenerate Suggestions' : 'Generate APIs'
                     )}
                 </button>
             </div>

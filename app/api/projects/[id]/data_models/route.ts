@@ -19,7 +19,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         }
 
         const body = await request.json();
-        const { current_models, user_custom_input } = body;
+        const { current_models, user_custom_input, save_only } = body;
 
         const db = await getDb();
 
@@ -48,7 +48,9 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         const promptConfig = await db.collection('feature_prompts').findOne({ feature_key: 'data_models' });
 
         let generatedContent = null;
-        if (promptConfig) {
+        if (save_only === true) {
+            generatedContent = JSON.stringify({ models: current_models || [] }, null, 2);
+        } else if (promptConfig) {
             const systemPrompt = promptConfig.system_prompt;
             let userPrompt = promptConfig.user_template;
 

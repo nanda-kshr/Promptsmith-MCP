@@ -19,7 +19,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         }
 
         const body = await request.json();
-        const { step, user_custom_input } = body;
+        const { step, user_custom_input, current_apis } = body;
 
         // step options: 'identify_actions' | 'map_actions' | 'define_contracts'
 
@@ -30,6 +30,48 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         });
 
         if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+
+        // Save-only path: persist current APIs without regeneration.
+        if (step === 'save_only') {
+            const finalContractsOutput = JSON.stringify({ apis: current_apis || [] }, null, 2);
+
+            await db.collection('project_features').updateOne(
+                { project_id: new ObjectId(projectId), feature_key: 'apis' },
+                {
+                    $set: {
+                        project_id: new ObjectId(projectId),
+                        feature_key: 'apis',
+                        generated_output: finalContractsOutput,
+                        "user_input.user_custom_input": user_custom_input,
+                        updatedAt: new Date()
+                    },
+                    $inc: { refactored_version: 1 },
+                    $setOnInsert: { createdAt: new Date() }
+                },
+                { upsert: true }
+            );
+
+            await db.collection('project_modes').updateOne(
+                { project_id: new ObjectId(projectId) },
+                {
+                    $set: {
+                        "features.apis.status": "COMPLETED",
+                        "features.apis.updatedAt": new Date(),
+                        "features.execute_coding.status": "IN_PROGRESS"
+                    }
+                }
+            );
+
+            const finalFeature = await db.collection('project_features').findOne({ project_id: new ObjectId(projectId), feature_key: 'apis' });
+
+            return NextResponse.json({
+                message: 'APIs saved',
+                data: {
+                    generated_output: finalContractsOutput,
+                    refactored_version: finalFeature?.refactored_version
+                }
+            });
+        }
 
         // --- FETCH FEATURE CONTEXT & PROMPTS ---
         const projectFeatures = await db.collection('project_features').find({

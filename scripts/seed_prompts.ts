@@ -264,6 +264,66 @@ User Custom Input / Changes:
 
 Generate/Update the Data Models.`
   },
+  {
+    feature_key: "media",
+    system_prompt: `You are a senior product designer and visual storyteller.
+
+  We are generating only the concrete images required to BUILD the app / website / game.
+  These are implementation assets for the product itself: backgrounds, sprites, characters, in-app illustrations, UI graphics, icons, empty-state visuals, and other in-product art.
+
+  Do NOT propose marketing assets, landing-page hero banners, app store screenshots, social media images, or any external promotional graphics.
+
+  You should group related image files into a single logical "card".
+  - Some cards will have multiple image files that are variations of the same thing (e.g. hazard_object_1.png, hazard_object_2.png, hazard_object_3.png).
+  - Some cards will have just one file (standalone asset).
+
+  For each image card you suggest:
+  - Give the card a short, human-friendly name.
+  - Write a very short description of what this group of assets is for.
+  - Provide a list of file entries, each with a concrete file_name (e.g. sprite_idle.png, hazard_object_1.png) and a ready-to-use prompt string for that specific file.
+
+  Guidelines:
+  - Think in terms of what the developer actually needs to ship the experience: level backgrounds, character sprites, item icons, dashboard backgrounds, empty states, in-app illustrations, etc.
+  - Use descriptive but filesystem-friendly file names with a consistent pattern inside a group when there are variants.
+  - Make prompts specific: include subject, composition, style, and mood.
+  - Prefer 5–15 high‑value image cards over exhaustive noise.
+
+Output ONLY valid JSON in the following shape.
+
+Required Output Shape
+{
+  "images": [
+    {
+      "name": "Hazard Objects",
+      "description": "Group of spiky hazard objects used as obstacles in the game levels.",
+      "files": [
+        {
+          "file_name": "hazard_object_1.png",
+          "prompt": "Pixel-art spiky hazard object with red glow, 32x32, top-down view, high contrast, game-ready sprite on transparent background"
+        },
+        {
+          "file_name": "hazard_object_2.png",
+          "prompt": "Pixel-art spiky hazard object variant with purple glow, 32x32, top-down view, high contrast, game-ready sprite on transparent background"
+        }
+      ]
+    }
+  ]
+}`,
+    user_template: `Project Context:
+Vision: {{vision_output}}
+User Flows: {{user_flow_output}}
+Tech Stack: {{tech_choices_output}}
+Rules: {{rules_output}}
+Data Models: {{data_models_output}}
+
+Existing Media Suggestions (if any):
+{{existing_media}}
+
+User Custom Media Requirements:
+{{user_custom_input}}
+
+Generate a focused list of images in the required JSON format.`
+  },
   // --- API PROMPTS (Step 1, 2, 3) ---
   {
     feature_key: "apis.actions", // Step 1
@@ -366,14 +426,18 @@ Output Shape
   {
     feature_key: "execute_coding.check", // Stage 0 (Pre-Flight)
     system_prompt: `You are a Senior DevOps Engineer.
-Your task is to generate A SINGLE atomic coding prompt for an AI Agent to verify the project foundation.
+Your task is to generate A SINGLE atomic coding prompt for an AI Agent to bootstrap the project foundation.
 
-Do NOT provide specific CLI commands.
 The prompt must instruct the Agent to:
-1. inspect the current directory.
-2. Verify if the project is initialized according to the Tech Stack.
-3. If valid, proceed.
-4. If invalid, initialize it.
+1. Inspect the current directory.
+2. Decide architecture mode from Tech Stack:
+  - MONOLITH mode: frameworks that already include frontend + backend in one project (example: Next.js fullstack).
+  - SPLIT mode: separate frontend and backend technologies.
+3. If SPLIT mode: create "frontend/" and "backend/" folders and initialize each side with appropriate tooling.
+4. If MONOLITH mode: initialize a single project in root (or one chosen app folder) and DO NOT force frontend/backend split.
+5. Use framework-specific initialization commands only when needed.
+6. If already initialized correctly, do not reinitialize.
+7. Keep idempotent behavior (safe to re-run).
 
 Context:
 - Tech Stack: {{tech_stack}}
@@ -382,12 +446,12 @@ Output ONLY valid JSON containing EXACTLY ONE prompt:
 {
   "prompts": [
     {
-      "title": "Agent Pre-Flight Check",
-      "prompt_text": "Inspect the current folder to ensure the project foundation is ready. Verify if the project is initialized according to the Tech Stack: {{tech_stack}}. If initialization is missing or incomplete, perform the necessary steps to set it up."
+      "title": "Agent Pre-Flight Bootstrap",
+      "prompt_text": "Bootstrap the project foundation using this Tech Stack: {{tech_stack}}. First decide if this should be MONOLITH or SPLIT. For MONOLITH stacks (e.g., Next.js fullstack), initialize one project and do not force frontend/backend directories. For SPLIT stacks, ensure \"frontend/\" and \"backend/\" exist and initialize each side with the correct framework tooling only if missing. Keep everything idempotent."
     }
   ]
 }`,
-    user_template: `Generate single pre-flight directive.
+    user_template: `Generate single pre-flight bootstrap directive.
 Tech Stack: {{tech_stack}}`
   },
 
@@ -395,10 +459,15 @@ Tech Stack: {{tech_stack}}`
   {
     feature_key: "execute_coding.stage1.env",
     system_prompt: `You are a Senior DevOps Engineer.
-Your task is to identify key Environment Variables based STRICTLY on the provided Tech Stack.
+Your task is to identify key Environment Variables based STRICTLY on the provided Tech Stack and selected architecture mode.
 
 Output Format:
-Return a JSON object where the keys are the Environment Variable names, and the values are brief descriptions.
+Return a JSON object with:
+- ARCHITECTURE_MODE: "MONOLITH" or "SPLIT"
+- FRONTEND_ENV: env vars for frontend side (or {} when not applicable)
+- BACKEND_ENV: env vars for backend side (or {} when not applicable)
+- MONOLITH_ENV: env vars for single-app monolith setup (or {} when not applicable)
+Each env section should map variable names to brief descriptions.
 Wrap this in the standard prompt structure, but put the JSON *inside* the prompt_text string.
 
 Structure:
@@ -406,7 +475,7 @@ Structure:
   "prompts": [
     {
       "title": "Proposed Environment Variables",
-      "prompt_text": "{\\"ENV\\": {\\"VAR_NAME\\": \\"Description...\\"}}" 
+      "prompt_text": "{\\"ARCHITECTURE_MODE\\": \\"MONOLITH|SPLIT\\", \\"FRONTEND_ENV\\": {\\"VAR_NAME\\": \\"Description...\\"}, \\"BACKEND_ENV\\": {\\"VAR_NAME\\": \\"Description...\\"}, \\"MONOLITH_ENV\\": {\\"VAR_NAME\\": \\"Description...\\"}}" 
     }
   ]
 }
@@ -416,6 +485,7 @@ CRITICAL RULES:
 - IGNORE the "suggestions" array in the input. Focus ONLY on the finalized/selected stack.
 - ONLY suggest variables for tools explicitly mentioned in the core stack.
 - Do NOT hallucinate "standard" cloud providers unless they are listed.
+- If one section is not needed, return an empty object for that section.
 
 Context:
 - Tech Stack: {{tech_stack}}
@@ -423,64 +493,72 @@ Context:
 
 Output ONLY valid JSON.`,
     user_template: `Analyze stack: {{tech_stack}}
-Generate structured JSON env vars.`
+Generate structured JSON env vars with flexible architecture mode.`
   },
 
   // STAGE 2: Skeleton
   {
     feature_key: "execute_coding.stage2.structure",
-    system_prompt: `You are a Lead Architect for a high-performance backend system.
-Your task is to Design the **BACKEND ONLY** file structure for the project based on the Tech Stack and Vision.
+    system_prompt: `You are a Lead Architect for application structure design.
+  Your task is to design the **core project structure** based on the Tech Stack and Vision.
 
 INSTRUCTIONS:
-1. Analyze the Tech Stack.
-2. Generate a JSON Tree representation of the file structure.
-3. **CRITICAL: EXPLICITLY EXCLUDE ALL FRONTEND/UI DIRECTORIES** (e.g., 'components', 'styles', 'public', 'hooks', 'views', 'pages', 'client').
-4. Focus ONLY on:
+  1. Analyze the Tech Stack and decide architecture mode:
+     - MONOLITH: single framework/project that handles fullstack (example: Next.js fullstack).
+     - SPLIT: separate frontend and backend projects.
+  2. Generate JSON output according to architecture mode:
+    - If SPLIT: output TWO trees: backend_tree and frontend_tree.
+    - If MONOLITH: output ONE tree under tree.
+  3. Use the Stage 1 env result to guide the architecture mode when available.
+  4. Focus on:
     - API Routes / Controllers
     - Database Models / Schemas
     - Services / Business Logic
     - Configuration / Environment
     - Utilities / Helpers / Middleware
-5. FOR EACH FILE, calculate:
+  5. FOR EACH FILE, calculate:
+    - "category": one of "core_infra" | "api_layer" | "data_layer" | "business_logic" | "frontend_ui" | "feature_flow" | "testing".
     - "order": Execution order (number). 0 = Independent files (utils, types, configs). Higher numbers = Dependent files. Ensure files are built AFTER their dependencies.
     - "dependencies": Array of file paths this file depends on.
     - "summary": Detailed technical summary. Start with a concise sentence describing what the file does. Then explain exposed variables, main logic, parameters, and types.
-6. Output A SINGLE prompt instructing the Agent to create this structure.
-7. EMBED the JSON Tree inside the prompt_text.
+  6. Use category assignment rules:
+    - core_infra: db connectors, interceptors, middleware base, auth/jwt helpers, config loaders, shared utils/types.
+    - api_layer: route handlers/controllers.
+    - data_layer: models/schemas/repositories.
+    - business_logic: services/use-cases.
+    - frontend_ui: components/pages/hooks.
+    - feature_flow: flow-specific orchestration files.
+    - testing: test files.
+  7. Output A SINGLE prompt instructing the Agent to create this structure.
+  8. EMBED the JSON payload inside the prompt_text.
 
 JSON Structure Rule:
-Use a recursive format:
+Use this exact top-level shape:
+
+MONOLITH:
 {
-  "tree": [
-    { 
-      "name": "src", 
-      "type": "folder", 
-      "children": [ 
-        { 
-          "name": "utils.ts", 
-          "type": "file", 
-          "path": "src/utils.ts",
-          "order": 0,
-          "dependencies": [],
-          "summary": "Provides date formatting utilities for the application. Exports 'formatDate(date: Date): string' using Intl.DateTimeFormat to ensure consistent locale handling.",
-          "children": []
-        } 
-      ] 
-    }
-  ]
+  "architecture_mode": "MONOLITH",
+  "tree": [ ... ]
+}
+
+SPLIT:
+{
+  "architecture_mode": "SPLIT",
+  "backend_tree": [ ... ],
+  "frontend_tree": [ ... ]
 }
 
 Context:
 - Vision: {{vision_output}}
 - Tech Stack: {{tech_stack}}
+- Stage 1 Env Output: {{env_output}}
 
 Output ONLY valid JSON:
 {
   "prompts": [
     {
-      "title": "Create Backend Structure",
-      "prompt_text": "{\\"tree\\": [ ...JSON_TREE_HERE... ]}\\n\\nBased on the above structure, create all backend directories and files..."
+      "title": "Create Core Structure",
+      "prompt_text": "{...JSON_STRUCTURE_HERE...}\\n\\nBased on the above structure, create all required directories and files for this architecture mode."
     }
   ]
 }
@@ -503,15 +581,19 @@ CONTEXT:
 - Env Vars: {{env_output}}
 
 INSTRUCTIONS:
-1. You will receive a BATCH of file specifications (Path, Summary, Dependencies).
+1. You will receive a BATCH of file specifications (Path, Category, Summary, Dependencies).
 2. For EACH file, generate a "Coding Prompt" that instructs an Agent to write that SPECIFIC file.
 3. The Coding Prompt MUST include:
     - The file path.
+  - The file category.
     - The Summary & Logic constraints (Concise).
     - The specific Dependencies (imports) required.
     - The Rules and Data Models.
+4. Category behavior:
+   - For category = core_infra, generate robust foundational code first (connectors, middleware, interceptors, config, shared helpers).
+   - For feature_flow/api_layer files, assume core_infra exists and wire into it.
 
-4. EXCLUSIONS & EXPANSIONS:
+5. EXCLUSIONS & EXPANSIONS:
    - DO NOT include "Tech Stack" or "Env Vars" in the output prompt.
    - DO NOT use placeholders for Tech/Env in the output.
    - EXPAND the Rules and Data Models (replace the placeholders with the actual content from the Context) in the output prompt.
@@ -574,106 +656,48 @@ IMPORTANT:
 API Context: {{apis_output}}`
   },
   {
-    feature_key: "execute_coding.stage5.structure",
-    system_prompt: `You are a Lead Frontend Architect.
-Your task is to Design the **FRONTEND ONLY** file structure for the project based on the Tech Stack and Vision.
+    feature_key: "execute_coding.stage5.batch",
+    system_prompt: `You are a Senior Backend Architect and Flow Implementor.
+Your goal is to generate detailed implementation prompts mechanism-by-mechanism from user flows.
+
+CONTEXT:
+- Vision: {{vision_output}}
+- User Flows: {{user_flow_output}}
+- Rules: {{rules_output}}
+- Data Models: {{data_models_output}}
+- API Docs: {{apis_output}}
+- Env Vars: {{env_output}}
 
 INSTRUCTIONS:
-1. Analyze the Tech Stack (e.g., Next.js, React, Tailwind).
-2. Generate a JSON Tree representation of the file structure.
-3. **CRITICAL: EXPLICITLY EXCLUDE ALL BACKEND DIRECTORIES** (e.g., 'api', 'models', 'services', 'controllers', 'db').
-4. Focus ONLY on:
-    - Pages / Routes (App Router)
-    - Components (UI, Features, Layouts)
-    - Hooks
-    - Context / State
-    - Utils / Lib (Frontend specific)
-    - Styles / Global CSS
-5. FOR EACH FILE, calculate:
-    - "order": Execution order.
-    - "dependencies": Imports.
-    - "summary": Detailed technical summary of the UI/Logic.
-6. Output A SINGLE prompt instructing the Agent to create this structure.
-7. EMBED the JSON Tree inside the prompt_text.
+1. You will receive a BATCH of mechanisms from user flows.
+2. For EACH mechanism, generate exactly ONE coding prompt that implements the backend logic end-to-end for that mechanism.
+3. Each prompt MUST include:
+   - Mechanism name and objective.
+   - Step-by-step backend implementation plan.
+   - Required API routes/controllers, service logic, and data model usage.
+   - Validation, auth/authorization checks, and error handling based on Rules.
+   - Integration notes with existing core setup files.
+4. Keep each prompt focused on one mechanism only.
 
-JSON Structure Rule:
-Use a recursive format:
-{
-  "tree": [
-    { 
-      "name": "app", 
-      "type": "folder", 
-      "children": [ 
-        { 
-          "name": "page.tsx", 
-          "type": "file", 
-          "path": "app/page.tsx",
-          "order": 10,
-          "dependencies": [],
-          "summary": "Main landing page...",
-          "children": []
-        } 
-      ] 
-    }
-  ]
-}
-
-Context:
-- Vision: {{vision_output}}
-- Tech Stack: {{tech_stack}}
-- API Docs: {{apis_output}} (Start thinking about how components will consume these APIs)
-
-Output ONLY valid JSON:
+OUTPUT FORMAT:
+Return ONLY valid JSON in this exact shape:
 {
   "prompts": [
     {
-      "title": "Create Frontend Structure",
-      "prompt_text": "{\\"tree\\": [ ...JSON_TREE_HERE... ]}\\n\\nBased on the above structure, create all frontend directories and files..."
+      "title": "Implement <Mechanism Name>",
+      "prompt_text": "Detailed coding instructions for one mechanism..."
     }
   ]
 }
 
 IMPORTANT:
 - Output RAW JSON only.
-- Do NOT use markdown code blocks (no \`\`\`json).`,
-    user_template: `Generate Frontend JSON Tree.`
-  },
-  {
-    feature_key: "execute_coding.stage6.batch",
-    system_prompt: `You are a Senior Frontend Engineer.
-Your goal is to generate detailed but CONCISE Coding Prompts for a list of FRONTEND files.
+- Do NOT use markdown code blocks.
+- Do NOT include frontend-only implementation instructions.`,
+    user_template: `Here is the batch of mechanisms to generate:
+{{mechanisms_batch}}
 
-CONTEXT:
-- Tech Stack: {{tech_stack}}
-- Vision: {{vision_output}}
-- API Docs: {{apis_output}} (Refer to this for data fetching)
-- Data Models: {{data_models_output}} (Refer to this for TypeScript interfaces)
-
-INSTRUCTIONS:
-1. You will receive a BATCH of file specifications (Path, Summary, Dependencies).
-2. For EACH file, generate a "Coding Prompt" that instructs an Agent to write that SPECIFIC file.
-3. The Coding Prompt MUST include:
-    - The file path.
-    - The Summary & UI/Logic requirements.
-    - The specific Dependencies.
-    - **CRITICAL**: Contextual utilization of the API. If a component needs data, instruct the agent to call the endpoints defined in API Docs.
-
-4. EXCLUSIONS & EXPANSIONS:
-   - EXPAND the API Docs and Data Models in the output prompt.
-
-Output JSON Format:
-{
-  "prompts": [
-    {
-      "title": "Create app/page.tsx",
-      "prompt_text": "Create the file 'app/page.tsx'.\\n\\nPurpose: [Summary]\\n\\nContext:\\n- APIs: {{apis_output}}\\n\\nRequirements:\\n1. Implement the UI...\\n2. Fetch data from /api/...\\n\\nOutput only the code block."
-    }
-  ]
-}`,
-    user_template: `Here is the batch of files to generate:
-{{files_batch}}
-
-Generate a coding prompt for EACH file.`
+Generate one backend implementation prompt for each mechanism.`
   },
   {
     feature_key: "execute_coding.stage7", // API Tests

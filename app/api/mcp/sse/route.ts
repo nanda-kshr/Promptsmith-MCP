@@ -6,6 +6,12 @@ import { mcpTransports, mcpUserSessions } from "@/app/lib/mcp_state";
 
 export const dynamic = "force-dynamic";
 
+const isAbortLikeError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    const name = error instanceof Error ? error.name : "";
+    return name === "AbortError" || message.includes("ResponseAborted") || message.includes("aborted");
+};
+
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -124,16 +130,44 @@ export async function GET(req: Request) {
 
         const stream = new TransformStream();
         const writer = stream.writable.getWriter();
+        const encoder = new TextEncoder();
+        let closed = false;
+        let transport: SSEServerTransport | null = null;
+
+        const cleanup = () => {
+            if (!transport) return;
+            mcpTransports.delete(transport.sessionId);
+            const activeSession = mcpUserSessions.get(decoded.userId);
+            if (activeSession === transport.sessionId) {
+                mcpUserSessions.delete(decoded.userId);
+            }
+        };
 
         // Mock Node.js ServerResponse for the SDK's SSEServerTransport
         const mockRes = {
-            writeHead: (status: number, headers: any) => { },
+            writeHead: () => { },
             write: (chunk: string) => {
-                writer.write(new TextEncoder().encode(chunk));
+                if (closed) return true;
+                void writer.write(encoder.encode(chunk)).catch((error: unknown) => {
+                    if (!isAbortLikeError(error)) {
+                        console.error("[MCP SSE] Stream write failed:", error);
+                    }
+                    if (!closed) {
+                        closed = true;
+                        cleanup();
+                    }
+                });
                 return true;
             },
             end: () => {
-                writer.close();
+                if (closed) return;
+                closed = true;
+                cleanup();
+                void writer.close().catch((error: unknown) => {
+                    if (!isAbortLikeError(error)) {
+                        console.error("[MCP SSE] Stream close failed:", error);
+                    }
+                });
             },
             on: () => { },
             once: () => { },
@@ -142,22 +176,48 @@ export async function GET(req: Request) {
             setHeader: () => { },
         };
 
-        // @ts-ignore - The SDK types expect http.ServerResponse
+        // @ts-expect-error - The SDK types expect http.ServerResponse
         // Point both ends to the same route for simplicity and compatibility
-        const transport = new SSEServerTransport("/api/mcp/sse", mockRes);
+        transport = new SSEServerTransport("/api/mcp/sse", mockRes);
 
         mcpTransports.set(transport.sessionId, transport);
         mcpUserSessions.set(decoded.userId, transport.sessionId);
+
+        req.signal.addEventListener("abort", () => {
+            if (!closed) {
+                closed = true;
+                void writer.close().catch(() => { });
+            }
+            cleanup();
+            console.log(`[MCP SSE] Connection aborted. Session cleaned: ${transport?.sessionId ?? "unknown"}`);
+        }, { once: true });
+
         console.log(`[MCP SSE] Session created: ${transport.sessionId} for user: ${decoded.userId}`);
         console.log(`[MCP SSE] Current global mcpUserSessions keys: ${Array.from(mcpUserSessions.keys())}`);
-
-        await server.connect(transport);
 
         // MANUAL ENDPOINT SEND: Ensure the client receives the endpoint event immediately
         // The SDK's SSEServerTransport tries to do this, but in Next.js App Router streaming,
         // explicit writing ensures it flushes correctly.
         const endpointMessage = `/api/mcp/sse?sessionId=${transport.sessionId}`;
-        writer.write(new TextEncoder().encode(`event: endpoint\ndata: ${endpointMessage}\n\n`));
+        if (!closed) {
+            void writer.write(encoder.encode(`event: endpoint\ndata: ${endpointMessage}\n\n`)).catch((error: unknown) => {
+                if (!isAbortLikeError(error)) {
+                    console.error("[MCP SSE] Failed to send endpoint event:", error);
+                }
+            });
+        }
+
+        // Do not block the GET response on connect; waiting here can deadlock initialize.
+        void server.connect(transport).catch((connectErr: unknown) => {
+            if (!isAbortLikeError(connectErr)) {
+                console.error("[MCP SSE] server.connect failed:", connectErr);
+            }
+            if (!closed) {
+                closed = true;
+                cleanup();
+                void writer.close().catch(() => { });
+            }
+        });
 
         return new Response(stream.readable, {
             headers: {

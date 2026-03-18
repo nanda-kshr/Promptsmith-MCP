@@ -64,6 +64,33 @@ export default function DataModelsTab({ projectId, initialData }: DataModelsTabP
         }
     };
 
+    const handleSaveAndNext = async () => {
+        setLoading(true);
+        try {
+            const res = await fetch(`/api/projects/${projectId}/data_models`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    current_models: models,
+                    user_custom_input: customInput,
+                    save_only: true
+                })
+            });
+
+            if (!res.ok) throw new Error('Failed to save data models');
+            router.push(`/projects/${projectId}?tab=apis`);
+        } catch (error) {
+            console.error(error);
+            alert('Failed to save data models. Please try again.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleReset = () => {
+        setCustomInput(initialData?.user_custom_input || '');
+    };
+
     const hasModels = models.length > 0;
 
     return (
@@ -141,7 +168,28 @@ export default function DataModelsTab({ projectId, initialData }: DataModelsTabP
                 />
             </div>
 
-            <div className="flex justify-end pt-4 sticky bottom-4 z-20">
+            <div className="flex justify-end gap-3 pt-4 sticky bottom-4 z-20">
+                <button
+                    onClick={handleReset}
+                    disabled={loading}
+                    className="bg-neutral-800 text-neutral-200 px-6 py-3 rounded-xl font-bold hover:bg-neutral-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed border border-neutral-700"
+                >
+                    Reset
+                </button>
+                <button
+                    onClick={handleSaveAndNext}
+                    disabled={loading}
+                    className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-xl shadow-blue-900/20"
+                >
+                    {loading ? (
+                        <>
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Saving...
+                        </>
+                    ) : (
+                        'Save & Next'
+                    )}
+                </button>
                 <button
                     onClick={handleGenerate}
                     disabled={loading}
@@ -153,7 +201,7 @@ export default function DataModelsTab({ projectId, initialData }: DataModelsTabP
                             Architecting...
                         </>
                     ) : (
-                        hasModels ? 'Update Data Models' : 'Generate Data Models'
+                        hasModels ? 'Regenerate Suggestions' : 'Generate Data Models'
                     )}
                 </button>
             </div>
