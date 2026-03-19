@@ -19,6 +19,7 @@ const STAGES = [
     { key: 'execute_coding.stage4', label: '4. API Docs', description: 'Generate API.md' },
     { key: 'execute_coding.stage5', label: '5. Flow Logic Implementation', description: 'Generate backend flow prompts mechanism-by-mechanism' },
     { key: 'execute_coding.stage7', label: '6. API Tests', description: 'Generate Test Suite' },
+    { key: 'execute_coding.stage8', label: '7. App Logic Verification', description: 'Generate final prompts to verify end-to-end app logic' },
 ];
 
 export default function ExecuteCodingTab({ projectId, initialData }: ExecuteCodingTabProps) {

@@ -30,7 +30,7 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
             };
 
             // IF FINAL STAGE, MARK FEATURE AS COMPLETE
-            if (stage === 'execute_coding.stage7') {
+            if (stage === 'execute_coding.stage8') {
                 updateDoc.generated_output = "COMPLETED";
                 // Update Project Modes
                 await db.collection('project_modes').updateOne(
@@ -67,7 +67,8 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
                     execute_coding_stage4: "IN_PROGRESS",
                     execute_coding_stage5: "IN_PROGRESS",
                     execute_coding_stage6: "IN_PROGRESS",
-                    execute_coding_stage7: "IN_PROGRESS"
+                    execute_coding_stage7: "IN_PROGRESS",
+                    execute_coding_stage8: "IN_PROGRESS"
                 }
             };
 
@@ -177,6 +178,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             'execute_coding.stage4': 40,
             'execute_coding.stage5': 50,
             'execute_coding.stage7': 60,
+            'execute_coding.stage8': 70,
         };
 
         // --- SUB-GENERATOR MAPPING ---
@@ -189,13 +191,13 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             'execute_coding.stage4': ['execute_coding.stage4.api_docs'],
             'execute_coding.stage5': ['execute_coding.stage5.batch'],
             'execute_coding.stage7': ['execute_coding.stage7'],
-            // Stage 8 removed
+            'execute_coding.stage8': ['execute_coding.stage8.logic_check'],
         };
 
         // 1. Fetch Full Context
         const projectFeatures = await db.collection('project_features').find({
             project_id: new ObjectId(projectId),
-            feature_key: { $in: ['vision', 'user_flow', 'rules', 'tech_choices', 'data_models', 'apis', 'execute_coding'] }
+            feature_key: { $in: ['vision', 'user_flow', 'rules', 'tech_choices', 'data_models', 'apis', 'media', 'execute_coding'] }
         }).toArray();
 
 
@@ -220,15 +222,68 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
             return executeCodingFeature?.recommended_env_vars ? JSON.stringify(executeCodingFeature.recommended_env_vars, null, 2) : '';
         };
 
+        const getCompactRulesOutput = () => {
+            const rulesRaw = getOutput('rules');
+            if (!rulesRaw || typeof rulesRaw !== 'string') return '';
+
+            try {
+                const parsed = JSON.parse(rulesRaw);
+                const groups = ['system_constraints', 'access_rules', 'behavior_rules', 'data_rules'];
+                const keyword = /env|mongodb|jwt|secret|auth|https|cors|typescript|strict|error|api|security|rate|index|objectid|timestamp|bcrypt/i;
+
+                const compact: Record<string, string[]> = {};
+
+                for (const group of groups) {
+                    const values = Array.isArray(parsed?.[group]) ? parsed[group] : [];
+                    const prioritized = values.filter((v: unknown) => typeof v === 'string' && keyword.test(v));
+                    const fallback = values.filter((v: unknown) => typeof v === 'string');
+                    const picked = [...prioritized, ...fallback].slice(0, 4) as string[];
+                    if (picked.length > 0) compact[group] = picked;
+                }
+
+                return JSON.stringify(compact, null, 2);
+            } catch {
+                return rulesRaw.length > 1200 ? `${rulesRaw.slice(0, 1200)}...` : rulesRaw;
+            }
+        };
+
+        const getCompactDataModelsOutput = () => {
+            const modelsRaw = getOutput('data_models');
+            if (!modelsRaw || typeof modelsRaw !== 'string') return '';
+
+            try {
+                const parsed = JSON.parse(modelsRaw);
+                const models = Array.isArray(parsed?.models) ? parsed.models : [];
+
+                const compactModels = models.slice(0, 8).map((m: any) => ({
+                    name: m?.name || 'Model',
+                    fields: Array.isArray(m?.fields)
+                        ? m.fields.slice(0, 6).map((f: any) => ({
+                            name: f?.name || 'field',
+                            description: f?.description || ''
+                        }))
+                        : [],
+                    relationships: Array.isArray(m?.relationships) ? m.relationships.slice(0, 3) : []
+                }));
+
+                return JSON.stringify({ models: compactModels }, null, 2);
+            } catch {
+                return modelsRaw.length > 1200 ? `${modelsRaw.slice(0, 1200)}...` : modelsRaw;
+            }
+        };
+
         // Helper to replace standard context placeholders
         const applyContext = (text: string, subset?: any) => {
             let replaced = text
                 .replace('{{vision_output}}', getOutput('vision'))
                 .replace('{{user_flow_output}}', getOutput('user_flow'))
                 .replace('{{rules_output}}', getOutput('rules'))
+                .replace('{{rules_compact_output}}', getCompactRulesOutput())
                 .replace('{{tech_stack}}', getOutput('tech_choices'))
                 .replace('{{data_models_output}}', getOutput('data_models'))
+                .replace('{{data_models_compact_output}}', getCompactDataModelsOutput())
                 .replace('{{apis_output}}', getOutput('apis'))
+                .replace('{{media_output}}', getOutput('media'))
                 .replace('{{env_output}}', getEnvOutput());
 
             if (subset) {
@@ -785,7 +840,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         };
 
         // IF FINAL STAGE, MARK FEATURE AS COMPLETE
-        if (stage === 'execute_coding.stage7') {
+        if (stage === 'execute_coding.stage8') {
             updateDoc.generated_output = "COMPLETED"; // Flag for Dashboard Green Tick
 
             // Update Project Modes Status

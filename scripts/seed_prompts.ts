@@ -510,12 +510,18 @@ INSTRUCTIONS:
     - If SPLIT: output TWO trees: backend_tree and frontend_tree.
     - If MONOLITH: output ONE tree under tree.
   3. Use the Stage 1 env result to guide the architecture mode when available.
+  3.1 Use Media Output to plan asset placeholders in the skeleton.
+     - Treat media file names as available asset placeholders to be wired into the project structure.
+     - Include image/media storage folders in the structure (prefer existing folders if implied by stack, otherwise recommend: public/media or public/images).
+     - Add placeholder file nodes for media assets when concrete filenames are provided.
+     - Keep asset placeholders grouped and easy to find (e.g. public/media/screens/, public/media/sprites/).
   4. Focus on:
     - API Routes / Controllers
     - Database Models / Schemas
     - Services / Business Logic
     - Configuration / Environment
     - Utilities / Helpers / Middleware
+    - Image/Media asset storage and placeholder files
   5. FOR EACH FILE, calculate:
     - "category": one of "core_infra" | "api_layer" | "data_layer" | "business_logic" | "frontend_ui" | "feature_flow" | "testing".
     - "order": Execution order (number). 0 = Independent files (utils, types, configs). Higher numbers = Dependent files. Ensure files are built AFTER their dependencies.
@@ -552,6 +558,7 @@ Context:
 - Vision: {{vision_output}}
 - Tech Stack: {{tech_stack}}
 - Stage 1 Env Output: {{env_output}}
+- Media Output: {{media_output}}
 
 Output ONLY valid JSON:
 {
@@ -567,7 +574,7 @@ IMPORTANT:
 - Output RAW JSON only.
 - Do NOT use markdown code blocks (no \`\`\`json).
 - Do NOT add any text before or after the JSON.`,
-    user_template: `Generate JSON Tree with dependency graph.`
+    user_template: `Generate JSON Tree with dependency graph and media asset placeholders from media output.`
   },
   {
     feature_key: "execute_coding.stage3.batch",
@@ -576,8 +583,8 @@ Your goal is to generate detailed but CONCISE Coding Prompts for a list of files
 
 CONTEXT:
 - Tech Stack: {{tech_stack}}
-- Rules: {{rules_output}}
-- Data Models: {{data_models_output}}
+- Rules (Relevant / Compact): {{rules_compact_output}}
+- Data Models (Relevant / Compact): {{data_models_compact_output}}
 - Env Vars: {{env_output}}
 
 INSTRUCTIONS:
@@ -588,7 +595,7 @@ INSTRUCTIONS:
   - The file category.
     - The Summary & Logic constraints (Concise).
     - The specific Dependencies (imports) required.
-    - The Rules and Data Models.
+    - Only RELEVANT Rules and Data Models from compact context.
 4. Category behavior:
    - For category = core_infra, generate robust foundational code first (connectors, middleware, interceptors, config, shared helpers).
    - For feature_flow/api_layer files, assume core_infra exists and wire into it.
@@ -596,14 +603,16 @@ INSTRUCTIONS:
 5. EXCLUSIONS & EXPANSIONS:
    - DO NOT include "Tech Stack" or "Env Vars" in the output prompt.
    - DO NOT use placeholders for Tech/Env in the output.
-   - EXPAND the Rules and Data Models (replace the placeholders with the actual content from the Context) in the output prompt.
+   - Keep prompt text concise and scoped to that file only.
+   - Do NOT dump full project rule/model JSON blobs.
+   - Include only the minimal relevant constraints needed for implementation.
 
 Output JSON Format:
 {
   "prompts": [
     {
       "title": "Create src/utils.ts",
-      "prompt_text": "Create the file 'src/utils.ts'.\\n\\nPurpose: [Summary]\\n\\nDependencies: [Deps]\\n\\nContext:\\n- Rules: {{rules_output}}\\n- Data Models: {{data_models_output}}\\n\\nRequirements:\\n1. Implement the file according to the summary.\\n2. Provide concise instructions.\\n\\nOutput only the code block."
+      "prompt_text": "Create the file 'src/utils.ts'.\\n\\nPurpose: [Summary]\\n\\nDependencies: [Deps]\\n\\nRelevant Context:\\n- Rules: [only applicable rules]\\n- Data Models: [only applicable model details]\\n\\nRequirements:\\n1. Implement the file according to the summary.\\n2. Keep implementation instructions tight and deterministic.\\n3. Output only the code block."
     }
   ]
 }`,
@@ -663,21 +672,37 @@ Your goal is to generate detailed implementation prompts mechanism-by-mechanism 
 CONTEXT:
 - Vision: {{vision_output}}
 - User Flows: {{user_flow_output}}
-- Rules: {{rules_output}}
-- Data Models: {{data_models_output}}
+- Rules (Relevant / Compact): {{rules_compact_output}}
+- Data Models (Relevant / Compact): {{data_models_compact_output}}
 - API Docs: {{apis_output}}
 - Env Vars: {{env_output}}
 
 INSTRUCTIONS:
 1. You will receive a BATCH of mechanisms from user flows.
 2. For EACH mechanism, generate exactly ONE coding prompt that implements the backend logic end-to-end for that mechanism.
-3. Each prompt MUST include:
+3. Each prompt MUST include these sections in this order:
    - Mechanism name and objective.
-   - Step-by-step backend implementation plan.
-   - Required API routes/controllers, service logic, and data model usage.
-   - Validation, auth/authorization checks, and error handling based on Rules.
-   - Integration notes with existing core setup files.
+   - Implementation Scope (target routes/files + what to build now).
+   - Route Contracts (method/path, auth expectation, request shape, response shape).
+   - Security and Validation Rules.
+   - Persistence and Consistency Rules.
+   - Error Contract.
+   - Acceptance Checklist.
 4. Keep each prompt focused on one mechanism only.
+5. Keep prompts concise and deterministic. Do NOT dump full project context JSON.
+
+MANDATORY GUARDRails FOR GENERATED PROMPTS:
+- Ownership/Auth: JWT userId is the only trusted identity for protected writes. Ignore or reject body userId overrides.
+- Integrity checks: If an integrity hash is required by mechanism, enforce deterministic format string "<scoreValue>:<sessionDuration>", HMAC-SHA256 with INTEGRITY_SECRET, and timing-safe comparison.
+- Rate limit rules: If mechanism needs throttling, define exact key and window (for authenticated routes, key by userId).
+- Consistency: For fields like personalBest/high-score, require atomic update semantics (conditional update or max-style update).
+- Errors: Require standardized JSON error shape for non-2xx responses: { code, message, timestamp }.
+- Secrets: Never include raw secret values in logs or responses.
+
+EXCLUSIONS:
+- Do NOT include frontend-only implementation instructions.
+- Do NOT include automated handoff text in generated prompt content.
+- Do NOT include markdown code fences.
 
 OUTPUT FORMAT:
 Return ONLY valid JSON in this exact shape:
@@ -685,7 +710,7 @@ Return ONLY valid JSON in this exact shape:
   "prompts": [
     {
       "title": "Implement <Mechanism Name>",
-      "prompt_text": "Detailed coding instructions for one mechanism..."
+      "prompt_text": "Objective: ...\\n\\nImplementation Scope:\\n...\\n\\nRoute Contracts:\\n...\\n\\nSecurity and Validation Rules:\\n...\\n\\nPersistence and Consistency Rules:\\n...\\n\\nError Contract:\\n...\\n\\nAcceptance Checklist:\\n1. ...\\n2. ..."
     }
   ]
 }
@@ -729,6 +754,52 @@ Output JSON Format:
   ]
 }`,
     user_template: `Generate API Test Suite.`
+  },
+  {
+    feature_key: "execute_coding.stage8.logic_check", // Final App Logic Verification
+    system_prompt: `You are a Senior QA Validation Engineer.
+Your goal is to generate final verification prompts to confirm the app logic works correctly end-to-end.
+
+CONTEXT:
+- Vision: {{vision_output}}
+- User Flows: {{user_flow_output}}
+- Rules (Relevant / Compact): {{rules_compact_output}}
+- Data Models (Relevant / Compact): {{data_models_compact_output}}
+- API Docs: {{apis_output}}
+- Env Vars: {{env_output}}
+
+INSTRUCTIONS:
+1. Generate one final verification prompt focused on validating business logic correctness, not just endpoint existence.
+2. The prompt must include these sections:
+   - Objective
+   - Critical Logic Checks
+   - End-to-End Scenarios
+   - Negative / Abuse Cases
+   - Data Integrity Checks
+   - Acceptance Criteria
+3. Validation should explicitly cover:
+   - Auth ownership and authorization boundaries.
+   - Rule compliance from core constraints.
+   - Consistency of persisted values after workflow completion.
+   - Error contract correctness ({ code, message, timestamp }).
+4. Keep the prompt actionable and deterministic with concrete checks and expected outcomes.
+
+OUTPUT FORMAT:
+Return ONLY valid JSON in this exact shape:
+{
+  "prompts": [
+    {
+      "title": "Final App Logic Verification",
+      "prompt_text": "Objective: ...\\n\\nCritical Logic Checks:\\n1. ...\\n\\nEnd-to-End Scenarios:\\n1. ...\\n\\nNegative / Abuse Cases:\\n1. ...\\n\\nData Integrity Checks:\\n1. ...\\n\\nAcceptance Criteria:\\n1. ..."
+    }
+  ]
+}
+
+IMPORTANT:
+- Output RAW JSON only.
+- Do NOT use markdown code blocks.
+- Do NOT include implementation tasks; this stage is verification-only.`,
+    user_template: `Generate final app-logic verification prompt(s) based on current project context.`
   }
 ];
 
